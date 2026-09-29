@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tech24 SLA & Duration Columns
 // @namespace    tech24-sla-duration
-// @version      1.1
+// @version      1.2
 // @description  Calculates business-hour SLA durations for Tech24 dashboard.
 // @match        https://tech24et.com/cases*
 // @updateURL    https://raw.githubusercontent.com/YoHighnessM/custom_scripts/main/tech24-sla-duration.user.js
@@ -329,9 +329,9 @@
       slaCell.innerHTML = "";
       slaCell.dataset.slaSignature = signature;
 
-      // Render Zone selector dropdown
+      // Render Zone selector dropdown with clean light design matching dashboard UI
       const zoneSelect = document.createElement("select");
-      zoneSelect.style.cssText = "margin-right: 6px; font-size: 11px; padding: 2px 4px; border-radius: 4px; border: 1px solid #475569; background: #0f172a; color: #f8fafc;";
+      zoneSelect.style.cssText = "margin-right: 6px; font-size: 11px; font-weight: 500; padding: 2px 6px; border-radius: 6px; border: 1px solid #cbd5e1; background-color: #f8fafc; color: #1e293b; cursor: pointer; outline: none; transition: border-color 0.2s;";
       ["1", "2", "3"].forEach((z) => {
         const opt = document.createElement("option");
         opt.value = z;
@@ -350,10 +350,12 @@
       textSpan.style.cssText = "display: inline-block; font-size: 12px; line-height: 1.4; vertical-align: middle;";
 
       const targetLine = document.createElement("div");
+      targetLine.style.color = "#475569";
       targetLine.textContent = `Target: ${DateParser.formatDateTime(targetDate)}`;
       textSpan.appendChild(targetLine);
 
       const statusLine = document.createElement("div");
+      statusLine.style.fontWeight = "500";
       textSpan.appendChild(statusLine);
 
       slaCell.appendChild(zoneSelect);
@@ -363,10 +365,10 @@
         // Closed case — static calculation
         const diffMinutes = BusinessCalendar.businessMinutesDiff(endDate, targetDate);
         if (diffMinutes >= 0) {
-          statusLine.textContent = `Closed within SLA (${DateParser.formatDuration(diffMinutes)} spare)`;
+          statusLine.textContent = `Within SLA (${DateParser.formatDuration(diffMinutes)} spare)`;
           statusLine.style.color = "#16a34a";
         } else {
-          statusLine.textContent = `Closed over SLA by ${DateParser.formatDuration(-diffMinutes)}`;
+          statusLine.textContent = `Over SLA by ${DateParser.formatDuration(-diffMinutes)}`;
           statusLine.style.color = "#dc2626";
         }
 
@@ -390,7 +392,7 @@
           const currentDuration = BusinessCalendar.businessMinutesDiff(startDate, now);
           durationCell.textContent = DateParser.formatDuration(currentDuration);
           durationCell.style.fontSize = "12px";
-          durationCell.style.color = "#9ca3af";
+          durationCell.style.color = "#64748b";
         };
 
         tick();
