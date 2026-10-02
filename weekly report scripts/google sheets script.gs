@@ -1,6 +1,6 @@
 /**
  * Tech24 Activity Tracker — Integrated Weekly Report & Case Timestamp Sync
- * Version: 2.3.0
+ * Version: 2.4.0
  * Description: Fully integrated, modular Google Apps Script for Google Sheets.
  *              Combines automated Weekly Report Generation (Google Docs) and
  *              Case Timestamp Synchronization Bridge for Tampermonkey Userscripts.
@@ -924,19 +924,14 @@ class WeeklyReportBuilder {
       lastWeekRaw = this.getRawValuesSafely("Last Week Case Amount", "A1:F7");
     }
 
-    const filteredDisplay = thisWeekDisplay.filter(
-      (row) => this.toText(row[0]).toLowerCase() !== "total"
-    );
-    const filteredRaw = thisWeekRaw.filter(
-      (row) => this.toText(row[0]).toLowerCase() !== "total"
-    );
-
-    const rows = filteredDisplay.map((row) => row.slice());
+    const rows = thisWeekDisplay.map((row) => row.slice());
 
     const lastWeekMap = {};
     if (lastWeekRaw && lastWeekRaw.length > 0) {
       for (let r = 1; r < lastWeekRaw.length; r += 1) {
-        const districtKey = this.toText(lastWeekRaw[r][0]).toLowerCase();
+        const districtKey =
+          this.toText(lastWeekRaw[r][0]).toLowerCase() ||
+          (lastWeekRaw[r][1] ? this.toText(lastWeekRaw[r][1]).toLowerCase() : "");
         if (districtKey) {
           lastWeekMap[districtKey] = lastWeekRaw[r];
         }
@@ -944,14 +939,19 @@ class WeeklyReportBuilder {
     }
 
     for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
-      const districtKey = this.toText(filteredDisplay[rowIndex][0]).toLowerCase();
-      const matchingLwRow = lastWeekMap[districtKey] || (lastWeekRaw ? lastWeekRaw[rowIndex] : null);
+      const districtKey =
+        this.toText(thisWeekDisplay[rowIndex][1]).toLowerCase() ||
+        this.toText(thisWeekDisplay[rowIndex][0]).toLowerCase();
 
-      for (let colIndex = 1; colIndex < rows[rowIndex].length; colIndex += 1) {
-        const currentRaw = filteredRaw[rowIndex][colIndex];
+      const matchingLwRow =
+        lastWeekMap[districtKey] || (lastWeekRaw ? lastWeekRaw[rowIndex] : null);
+
+      for (let colIndex = 2; colIndex < rows[rowIndex].length; colIndex += 1) {
+        const currentRaw = thisWeekRaw[rowIndex][colIndex];
+        const lwColIndex = colIndex - 1;
         const previousRaw =
-          matchingLwRow && colIndex < matchingLwRow.length
-            ? matchingLwRow[colIndex]
+          matchingLwRow && lwColIndex < matchingLwRow.length
+            ? matchingLwRow[lwColIndex]
             : "";
 
         if (this.isBlank(currentRaw) && this.isBlank(previousRaw)) {
@@ -1007,7 +1007,12 @@ class WeeklyReportBuilder {
 
     const dataRows = rows
       .slice(startIndex)
-      .filter((row) => !this.isRowBlank(row));
+      .filter((row) => !this.isRowBlank(row))
+      .sort((a, b) => {
+        const totalA = this.toNumber(a[a.length - 1]);
+        const totalB = this.toNumber(b[b.length - 1]);
+        return totalB - totalA; // Descending order
+      });
 
     return header.concat(dataRows);
   }
