@@ -1,6 +1,6 @@
 /**
  * Tech24 Activity Tracker — Integrated Weekly Report & Case Timestamp Sync
- * Version: 2.2.0
+ * Version: 2.4.0
  * Description: Fully integrated, modular Google Apps Script for Google Sheets.
  *              Combines automated Weekly Report Generation (Google Docs) and
  *              Case Timestamp Synchronization Bridge for Tampermonkey Userscripts.
@@ -78,6 +78,10 @@ const REPORT_CONFIG = Object.freeze({
     CASE_SUMMARY_BY_DISTRICT: {
       sheetName: "Case Summary",
       tableName: "Case Counts By District",
+    },
+    LAST_WEEK_CASE_AMOUNT: {
+      sheetName: "Last Week Case Amount",
+      tableName: "Last week case amount",
     },
     CASES_CLOSED_AFTER_REGISTRATION_DATE: {
       sheetName: "Post-Reg & Ongoing Cases",
@@ -227,6 +231,7 @@ function clearData() {
     SpreadsheetRepository.clearTableBodyValuesOnly(spreadsheet, tableMetadata, "PER_DIEM_COST");
     SpreadsheetRepository.clearTableBodyValuesOnly(spreadsheet, tableMetadata, "CHALLENGES");
     SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "Last Week Case Summary", "B2:F6");
+    SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "Last Week Case Amount", "B2:F7");
 
     SpreadsheetRepository.uncheckTableBodyColumn(
       spreadsheet,
@@ -578,16 +583,9 @@ class WeeklyReportBuilder {
       this.getTableDisplayValues("CASES_CLOSED_AFTER_REGISTRATION_DATE"),
       1
     );
-    if (filteredRows.length === 0) {
-      this.addTableSection("Cases Closed After Reg. Date", [], {});
-      return;
-    }
-
-    const rows = this.appendTableTotalsRow(filteredRows);
-    this.addTableSection("Cases Closed After Reg. Date", rows, {
+    this.addTableSection("Cases Closed After Reg. Date", filteredRows, {
       boldFirstRow: true,
       boldFirstColumn: true,
-      boldLastRow: true,
     });
   }
 
@@ -915,55 +913,45 @@ class WeeklyReportBuilder {
     text.setForegroundColor(REPORT_CONFIG.TEXT_COLOR);
   }
 
-  appendTableTotalsRow(rows) {
-    if (!rows || rows.length <= 1) {
-      return rows;
-    }
-
-    const colCount = rows[0].length;
-    const lastColIndex = colCount - 1;
-
-    let total = 0;
-    for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
-      const val = this.toNumber(rows[rowIndex][lastColIndex]);
-      total += val;
-    }
-
-    const totalRow = new Array(colCount).fill("");
-    totalRow[0] = "Total";
-    totalRow[lastColIndex] = this.formatAmountWithCommas(total);
-
-    return rows.concat([totalRow]);
-  }
-
-  formatAmountWithCommas(value) {
-    if (isNaN(value)) return "0";
-    const isFloat = value % 1 !== 0;
-    const parts = (isFloat ? value.toFixed(2) : String(Math.round(value))).split(".");
-    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-    return parts.join(".");
-  }
-
   buildCaseSummaryByDistrictRows() {
     const thisWeekDisplay = this.getTableDisplayValues("CASE_SUMMARY_BY_DISTRICT");
     const thisWeekRaw = this.getTableRawValues("CASE_SUMMARY_BY_DISTRICT");
-    const lastWeekRaw = this.getRawValuesSafely("Last Week Case Summary", "A1:F6");
 
-    const filteredDisplay = thisWeekDisplay.filter(
-      (row) => this.toText(row[0]).toLowerCase() !== "total"
-    );
-    const filteredRaw = thisWeekRaw.filter(
-      (row) => this.toText(row[0]).toLowerCase() !== "total"
-    );
+    let lastWeekRaw = null;
+    try {
+      lastWeekRaw = this.getTableRawValues("LAST_WEEK_CASE_AMOUNT");
+    } catch (e) {
+      lastWeekRaw = this.getRawValuesSafely("Last Week Case Amount", "A1:F7");
+    }
 
-    const rows = filteredDisplay.map((row) => row.slice());
+    const rows = thisWeekDisplay.map((row) => row.slice());
+
+    const lastWeekMap = {};
+    if (lastWeekRaw && lastWeekRaw.length > 0) {
+      for (let r = 1; r < lastWeekRaw.length; r += 1) {
+        const districtKey =
+          this.toText(lastWeekRaw[r][0]).toLowerCase() ||
+          (lastWeekRaw[r][1] ? this.toText(lastWeekRaw[r][1]).toLowerCase() : "");
+        if (districtKey) {
+          lastWeekMap[districtKey] = lastWeekRaw[r];
+        }
+      }
+    }
 
     for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+      const districtKey =
+        this.toText(thisWeekDisplay[rowIndex][1]).toLowerCase() ||
+        this.toText(thisWeekDisplay[rowIndex][0]).toLowerCase();
+
+      const matchingLwRow =
+        lastWeekMap[districtKey] || (lastWeekRaw ? lastWeekRaw[rowIndex] : null);
+
       for (let colIndex = 2; colIndex < rows[rowIndex].length; colIndex += 1) {
-        const currentRaw = filteredRaw[rowIndex][colIndex];
+        const currentRaw = thisWeekRaw[rowIndex][colIndex];
+        const lwColIndex = colIndex - 1;
         const previousRaw =
-          lastWeekRaw && lastWeekRaw[rowIndex] && colIndex - 1 < lastWeekRaw[rowIndex].length
-            ? lastWeekRaw[rowIndex][colIndex - 1]
+          matchingLwRow && lwColIndex < matchingLwRow.length
+            ? matchingLwRow[lwColIndex]
             : "";
 
         if (this.isBlank(currentRaw) && this.isBlank(previousRaw)) {
@@ -1019,7 +1007,12 @@ class WeeklyReportBuilder {
 
     const dataRows = rows
       .slice(startIndex)
-      .filter((row) => !this.isRowBlank(row));
+      .filter((row) => !this.isRowBlank(row))
+      .sort((a, b) => {
+        const totalA = this.toNumber(a[a.length - 1]);
+        const totalB = this.toNumber(b[b.length - 1]);
+        return totalB - totalA; // Descending order
+      });
 
     return header.concat(dataRows);
   }
@@ -1102,13 +1095,6 @@ class WeeklyReportBuilder {
   }
 
   formatComparisonCell(currentValue, previousValue) {
-    const arrow =
-      currentValue > previousValue
-        ? "↑"
-        : currentValue < previousValue
-        ? "↓"
-        : "→";
-
     const percentChange =
       previousValue === 0
         ? currentValue === 0
@@ -1118,7 +1104,7 @@ class WeeklyReportBuilder {
 
     const roundedPercent = Math.round(percentChange);
     const sign = roundedPercent > 0 ? "+" : "";
-    return `${currentValue} (${arrow} ${sign}${roundedPercent}% from ${previousValue})`;
+    return `${currentValue} (vs. ${previousValue} LW, ${sign}${roundedPercent}%)`;
   }
 
   getDisplayValuesSafely(sheetName, rangeA1) {
