@@ -1,9 +1,9 @@
 /**
  * Weekly Report Google Docs Formatter
- * Version: 2.1.0
+ * Version: 2.2.0
  * Description: Modular Google Apps Script for formatting Weekly Report Google Docs.
  *              Applies custom typography, weighted font styles, table alignment rules,
- *              column widths, and automatic totals rows.
+ *              column widths, and automatic totals rows with cell merging.
  */
 
 // =============================================================================
@@ -43,6 +43,7 @@ const DOC_STYLE_CONFIG = Object.freeze({
     "PM Plans",
     "PM Plan",
     "Per Diem Cost",
+    "Changed Spare Parts",
   ],
   DYNAMIC_COLUMN_WIDTH_FROM_INDEX_2: {
     tableNames: new Set(["Bank Specific Case Count", "Bank Specific PM Count"]),
@@ -55,6 +56,11 @@ const DOC_STYLE_CONFIG = Object.freeze({
     { columnIndex: 4, widthPoints: 56.232 },
     { columnIndex: 5, widthPoints: 48.744 },
     { columnIndex: 6, widthPoints: 52.488 },
+  ],
+  CASES_CLOSED_AFTER_REG_DATE_COLUMN_WIDTHS: [
+    { columnIndex: 1, widthPoints: 57.6 }, // 0.8 in × 72 pt/in
+    { columnIndex: 3, widthPoints: 79.2 }, // 1.1 in × 72 pt/in
+    { columnIndex: 4, widthPoints: 64.8 }, // 0.9 in × 72 pt/in
   ],
   TABLE_RULES: {
     "District Summary": "CENTER_ALL_EXCEPT_SECOND_LEFT",
@@ -96,7 +102,6 @@ function onInstall(e) {
   onOpen(e);
 }
 
-// Manual menu builder for script editor usage
 function createCustomMenu() {
   onOpen(null);
 }
@@ -289,6 +294,20 @@ const TypographyStyler = {
 
           if (capturedTableTitle === "Technicians Weekly Activity") {
             DOC_STYLE_CONFIG.TECHNICIANS_WEEKLY_ACTIVITY_COLUMN_WIDTHS.forEach(
+              (columnWidth) => {
+                requests.push(
+                  this.createTableColumnWidthRequest(
+                    element.startIndex,
+                    columnWidth.columnIndex,
+                    columnWidth.widthPoints
+                  )
+                );
+              }
+            );
+          }
+
+          if (capturedTableTitle === "Cases Closed After Reg. Date") {
+            DOC_STYLE_CONFIG.CASES_CLOSED_AFTER_REG_DATE_COLUMN_WIDTHS.forEach(
               (columnWidth) => {
                 requests.push(
                   this.createTableColumnWidthRequest(
@@ -602,13 +621,46 @@ const PerDiemCalculator = {
       cell.editAsText().setBold(
         colIndex === 0 || colIndex === amountColumnIndex
       );
+    }
+
+    const currentCells = totalRow.getNumCells();
+    if (currentCells >= 5) {
+      try {
+        const mergedCell = totalRow.getCell(0).merge(totalRow.getCell(3));
+        mergedCell.setText("Total");
+        mergedCell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
+        mergedCell.editAsText().setBold(true);
+        TableStyler.setCellHorizontalAlignment(
+          mergedCell,
+          DocumentApp.HorizontalAlignment.CENTER
+        );
+      } catch (err) {
+        Logger.log("[PerDiem Merge Error]: " + err.message);
+      }
+    } else if (currentCells > 2) {
+      try {
+        const endMergeIndex = currentCells - 2;
+        const mergedCell = totalRow.getCell(0).merge(totalRow.getCell(endMergeIndex));
+        mergedCell.setText("Total");
+        mergedCell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
+        mergedCell.editAsText().setBold(true);
+        TableStyler.setCellHorizontalAlignment(
+          mergedCell,
+          DocumentApp.HorizontalAlignment.CENTER
+        );
+      } catch (err) {
+        Logger.log("[PerDiem Merge Error]: " + err.message);
+      }
+    }
+
+    const finalCellCount = totalRow.getNumCells();
+    if (finalCellCount > 0) {
+      const amountCell = totalRow.getCell(finalCellCount - 1);
+      amountCell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
+      amountCell.editAsText().setBold(true);
       TableStyler.setCellHorizontalAlignment(
-        cell,
-        TableStyler.getHorizontalAlignmentForRule(
-          "FIRST_AND_LAST_CENTER_REST_LEFT",
-          colIndex,
-          colCount
-        )
+        amountCell,
+        DocumentApp.HorizontalAlignment.CENTER
       );
     }
   },
