@@ -1,6 +1,6 @@
 /**
  * Weekly Report Google Docs Formatter
- * Version: 2.0.0
+ * Version: 2.1.0
  * Description: Modular Google Apps Script for formatting Weekly Report Google Docs.
  *              Applies custom typography, weighted font styles, table alignment rules,
  *              column widths, and automatic totals rows.
@@ -79,13 +79,26 @@ const DOC_STYLE_CONFIG = Object.freeze({
 });
 
 // =============================================================================
-// 2. Menu Entry Points
+// 2. Menu Entry Points & Installation Helpers
 // =============================================================================
-function onOpen() {
-  DocumentApp.getUi()
-    .createMenu("Report Formatting")
-    .addItem("Format Report", "applyWeeklyReportDocFormatting")
-    .addToUi();
+function onOpen(e) {
+  try {
+    const ui = DocumentApp.getUi();
+    ui.createMenu("Report Formatting")
+      .addItem("Format Report", "applyWeeklyReportDocFormatting")
+      .addToUi();
+  } catch (err) {
+    Logger.log("[onOpen Error]: " + err.message);
+  }
+}
+
+function onInstall(e) {
+  onOpen(e);
+}
+
+// Manual menu builder for script editor usage
+function createCustomMenu() {
+  onOpen(null);
 }
 
 function applyWeeklyReportDocFormatting() {

@@ -1,6 +1,6 @@
 /**
  * Tech24 Activity Tracker — Integrated Weekly Report & Case Timestamp Sync
- * Version: 2.1.0
+ * Version: 2.2.0
  * Description: Fully integrated, modular Google Apps Script for Google Sheets.
  *              Combines automated Weekly Report Generation (Google Docs) and
  *              Case Timestamp Synchronization Bridge for Tampermonkey Userscripts.
@@ -34,7 +34,6 @@ const REPORT_CONFIG = Object.freeze({
   TEXT_COLOR: "#000000",
   COVER: {
     title: "Weekly Report",
-    period: "February 14 to February 20",
     district: "Bishoftu, Central Addis, Hawassa, South Addis & Wolayta",
     company: "Tech 24 Trading One Member PLC",
     overviewTitle: "Overview",
@@ -130,6 +129,30 @@ const REPORT_CONFIG = Object.freeze({
     },
   }),
 });
+
+// Helper function to calculate current report period (Saturday to Friday)
+function getWeeklyReportPeriod(refDate = new Date()) {
+  const date = new Date(refDate);
+  const day = date.getDay(); // 0 = Sun, 1 = Mon, ..., 5 = Fri, 6 = Sat
+
+  const satOffset = day === 6 ? 0 : -(day + 1);
+  const saturday = new Date(date);
+  saturday.setDate(date.getDate() + satOffset);
+
+  const friday = new Date(saturday);
+  friday.setDate(saturday.getDate() + 6);
+
+  const monthNames = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+
+  const pad = (n) => String(n).padStart(2, "0");
+  const startStr = `${monthNames[saturday.getMonth()]} ${pad(saturday.getDate())}`;
+  const endStr = `${monthNames[friday.getMonth()]} ${pad(friday.getDate())}`;
+
+  return `${startStr} to ${endStr}`;
+}
 
 // =============================================================================
 // 2. Menu Entry Points & Triggers
@@ -499,7 +522,7 @@ class WeeklyReportBuilder {
     const periodValue =
       (dataSetValues && dataSetValues.length > 0
         ? this.toText(dataSetValues[0][0])
-        : "") || cover.period;
+        : "") || getWeeklyReportPeriod();
     this.appendLabeledParagraph("Period", periodValue);
     this.appendLabeledParagraph("District", cover.district);
     this.appendLabeledParagraph("Company", cover.company);
@@ -555,10 +578,16 @@ class WeeklyReportBuilder {
       this.getTableDisplayValues("CASES_CLOSED_AFTER_REGISTRATION_DATE"),
       1
     );
-    const rows = this.excludeColumns(filteredRows, [filteredRows[0].length - 1]);
+    if (filteredRows.length === 0) {
+      this.addTableSection("Cases Closed After Reg. Date", [], {});
+      return;
+    }
+
+    const rows = this.appendTableTotalsRow(filteredRows);
     this.addTableSection("Cases Closed After Reg. Date", rows, {
       boldFirstRow: true,
       boldFirstColumn: true,
+      boldLastRow: true,
     });
   }
 
@@ -886,15 +915,52 @@ class WeeklyReportBuilder {
     text.setForegroundColor(REPORT_CONFIG.TEXT_COLOR);
   }
 
+  appendTableTotalsRow(rows) {
+    if (!rows || rows.length <= 1) {
+      return rows;
+    }
+
+    const colCount = rows[0].length;
+    const lastColIndex = colCount - 1;
+
+    let total = 0;
+    for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+      const val = this.toNumber(rows[rowIndex][lastColIndex]);
+      total += val;
+    }
+
+    const totalRow = new Array(colCount).fill("");
+    totalRow[0] = "Total";
+    totalRow[lastColIndex] = this.formatAmountWithCommas(total);
+
+    return rows.concat([totalRow]);
+  }
+
+  formatAmountWithCommas(value) {
+    if (isNaN(value)) return "0";
+    const isFloat = value % 1 !== 0;
+    const parts = (isFloat ? value.toFixed(2) : String(Math.round(value))).split(".");
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return parts.join(".");
+  }
+
   buildCaseSummaryByDistrictRows() {
     const thisWeekDisplay = this.getTableDisplayValues("CASE_SUMMARY_BY_DISTRICT");
     const thisWeekRaw = this.getTableRawValues("CASE_SUMMARY_BY_DISTRICT");
     const lastWeekRaw = this.getRawValuesSafely("Last Week Case Summary", "A1:F6");
-    const rows = thisWeekDisplay.map((row) => row.slice());
+
+    const filteredDisplay = thisWeekDisplay.filter(
+      (row) => this.toText(row[0]).toLowerCase() !== "total"
+    );
+    const filteredRaw = thisWeekRaw.filter(
+      (row) => this.toText(row[0]).toLowerCase() !== "total"
+    );
+
+    const rows = filteredDisplay.map((row) => row.slice());
 
     for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
       for (let colIndex = 2; colIndex < rows[rowIndex].length; colIndex += 1) {
-        const currentRaw = thisWeekRaw[rowIndex][colIndex];
+        const currentRaw = filteredRaw[rowIndex][colIndex];
         const previousRaw =
           lastWeekRaw && lastWeekRaw[rowIndex] && colIndex - 1 < lastWeekRaw[rowIndex].length
             ? lastWeekRaw[rowIndex][colIndex - 1]
@@ -948,17 +1014,12 @@ class WeeklyReportBuilder {
     }
 
     const hasHeader = this.hasHeaderRow(rows);
-    const header = hasHeader ? [["No"].concat(rows[0])] : [];
+    const header = hasHeader ? [rows[0]] : [];
     const startIndex = hasHeader ? 1 : 0;
 
     const dataRows = rows
       .slice(startIndex)
-      .filter((row) => !this.isRowBlank(row))
-      .sort(
-        (a, b) =>
-          this.toNumber(b[b.length - 1]) - this.toNumber(a[a.length - 1])
-      )
-      .map((row, index) => [String(index + 1)].concat(row));
+      .filter((row) => !this.isRowBlank(row));
 
     return header.concat(dataRows);
   }
