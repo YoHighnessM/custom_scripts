@@ -1,6 +1,6 @@
 /**
  * Tech24 Activity Tracker — Integrated Weekly Report & Case Timestamp Sync
- * Version: 2.1.0
+ * Version: 2.3.0
  * Description: Fully integrated, modular Google Apps Script for Google Sheets.
  *              Combines automated Weekly Report Generation (Google Docs) and
  *              Case Timestamp Synchronization Bridge for Tampermonkey Userscripts.
@@ -34,7 +34,6 @@ const REPORT_CONFIG = Object.freeze({
   TEXT_COLOR: "#000000",
   COVER: {
     title: "Weekly Report",
-    period: "February 14 to February 20",
     district: "Bishoftu, Central Addis, Hawassa, South Addis & Wolayta",
     company: "Tech 24 Trading One Member PLC",
     overviewTitle: "Overview",
@@ -79,6 +78,10 @@ const REPORT_CONFIG = Object.freeze({
     CASE_SUMMARY_BY_DISTRICT: {
       sheetName: "Case Summary",
       tableName: "Case Counts By District",
+    },
+    LAST_WEEK_CASE_AMOUNT: {
+      sheetName: "Last Week Case Amount",
+      tableName: "Last week case amount",
     },
     CASES_CLOSED_AFTER_REGISTRATION_DATE: {
       sheetName: "Post-Reg & Ongoing Cases",
@@ -130,6 +133,30 @@ const REPORT_CONFIG = Object.freeze({
     },
   }),
 });
+
+// Helper function to calculate current report period (Saturday to Friday)
+function getWeeklyReportPeriod(refDate = new Date()) {
+  const date = new Date(refDate);
+  const day = date.getDay(); // 0 = Sun, 1 = Mon, ..., 5 = Fri, 6 = Sat
+
+  const satOffset = day === 6 ? 0 : -(day + 1);
+  const saturday = new Date(date);
+  saturday.setDate(date.getDate() + satOffset);
+
+  const friday = new Date(saturday);
+  friday.setDate(saturday.getDate() + 6);
+
+  const monthNames = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+
+  const pad = (n) => String(n).padStart(2, "0");
+  const startStr = `${monthNames[saturday.getMonth()]} ${pad(saturday.getDate())}`;
+  const endStr = `${monthNames[friday.getMonth()]} ${pad(friday.getDate())}`;
+
+  return `${startStr} to ${endStr}`;
+}
 
 // =============================================================================
 // 2. Menu Entry Points & Triggers
@@ -204,6 +231,7 @@ function clearData() {
     SpreadsheetRepository.clearTableBodyValuesOnly(spreadsheet, tableMetadata, "PER_DIEM_COST");
     SpreadsheetRepository.clearTableBodyValuesOnly(spreadsheet, tableMetadata, "CHALLENGES");
     SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "Last Week Case Summary", "B2:F6");
+    SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "Last Week Case Amount", "B2:F7");
 
     SpreadsheetRepository.uncheckTableBodyColumn(
       spreadsheet,
@@ -499,7 +527,7 @@ class WeeklyReportBuilder {
     const periodValue =
       (dataSetValues && dataSetValues.length > 0
         ? this.toText(dataSetValues[0][0])
-        : "") || cover.period;
+        : "") || getWeeklyReportPeriod();
     this.appendLabeledParagraph("Period", periodValue);
     this.appendLabeledParagraph("District", cover.district);
     this.appendLabeledParagraph("Company", cover.company);
@@ -555,8 +583,7 @@ class WeeklyReportBuilder {
       this.getTableDisplayValues("CASES_CLOSED_AFTER_REGISTRATION_DATE"),
       1
     );
-    const rows = this.excludeColumns(filteredRows, [filteredRows[0].length - 1]);
-    this.addTableSection("Cases Closed After Reg. Date", rows, {
+    this.addTableSection("Cases Closed After Reg. Date", filteredRows, {
       boldFirstRow: true,
       boldFirstColumn: true,
     });
@@ -889,15 +916,42 @@ class WeeklyReportBuilder {
   buildCaseSummaryByDistrictRows() {
     const thisWeekDisplay = this.getTableDisplayValues("CASE_SUMMARY_BY_DISTRICT");
     const thisWeekRaw = this.getTableRawValues("CASE_SUMMARY_BY_DISTRICT");
-    const lastWeekRaw = this.getRawValuesSafely("Last Week Case Summary", "A1:F6");
-    const rows = thisWeekDisplay.map((row) => row.slice());
+
+    let lastWeekRaw = null;
+    try {
+      lastWeekRaw = this.getTableRawValues("LAST_WEEK_CASE_AMOUNT");
+    } catch (e) {
+      lastWeekRaw = this.getRawValuesSafely("Last Week Case Amount", "A1:F7");
+    }
+
+    const filteredDisplay = thisWeekDisplay.filter(
+      (row) => this.toText(row[0]).toLowerCase() !== "total"
+    );
+    const filteredRaw = thisWeekRaw.filter(
+      (row) => this.toText(row[0]).toLowerCase() !== "total"
+    );
+
+    const rows = filteredDisplay.map((row) => row.slice());
+
+    const lastWeekMap = {};
+    if (lastWeekRaw && lastWeekRaw.length > 0) {
+      for (let r = 1; r < lastWeekRaw.length; r += 1) {
+        const districtKey = this.toText(lastWeekRaw[r][0]).toLowerCase();
+        if (districtKey) {
+          lastWeekMap[districtKey] = lastWeekRaw[r];
+        }
+      }
+    }
 
     for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
-      for (let colIndex = 2; colIndex < rows[rowIndex].length; colIndex += 1) {
-        const currentRaw = thisWeekRaw[rowIndex][colIndex];
+      const districtKey = this.toText(filteredDisplay[rowIndex][0]).toLowerCase();
+      const matchingLwRow = lastWeekMap[districtKey] || (lastWeekRaw ? lastWeekRaw[rowIndex] : null);
+
+      for (let colIndex = 1; colIndex < rows[rowIndex].length; colIndex += 1) {
+        const currentRaw = filteredRaw[rowIndex][colIndex];
         const previousRaw =
-          lastWeekRaw && lastWeekRaw[rowIndex] && colIndex - 1 < lastWeekRaw[rowIndex].length
-            ? lastWeekRaw[rowIndex][colIndex - 1]
+          matchingLwRow && colIndex < matchingLwRow.length
+            ? matchingLwRow[colIndex]
             : "";
 
         if (this.isBlank(currentRaw) && this.isBlank(previousRaw)) {
@@ -948,17 +1002,12 @@ class WeeklyReportBuilder {
     }
 
     const hasHeader = this.hasHeaderRow(rows);
-    const header = hasHeader ? [["No"].concat(rows[0])] : [];
+    const header = hasHeader ? [rows[0]] : [];
     const startIndex = hasHeader ? 1 : 0;
 
     const dataRows = rows
       .slice(startIndex)
-      .filter((row) => !this.isRowBlank(row))
-      .sort(
-        (a, b) =>
-          this.toNumber(b[b.length - 1]) - this.toNumber(a[a.length - 1])
-      )
-      .map((row, index) => [String(index + 1)].concat(row));
+      .filter((row) => !this.isRowBlank(row));
 
     return header.concat(dataRows);
   }
@@ -1041,13 +1090,6 @@ class WeeklyReportBuilder {
   }
 
   formatComparisonCell(currentValue, previousValue) {
-    const arrow =
-      currentValue > previousValue
-        ? "↑"
-        : currentValue < previousValue
-        ? "↓"
-        : "→";
-
     const percentChange =
       previousValue === 0
         ? currentValue === 0
@@ -1057,7 +1099,7 @@ class WeeklyReportBuilder {
 
     const roundedPercent = Math.round(percentChange);
     const sign = roundedPercent > 0 ? "+" : "";
-    return `${currentValue} (${arrow} ${sign}${roundedPercent}% from ${previousValue})`;
+    return `${currentValue} (vs. ${previousValue} LW, ${sign}${roundedPercent}%)`;
   }
 
   getDisplayValuesSafely(sheetName, rangeA1) {
