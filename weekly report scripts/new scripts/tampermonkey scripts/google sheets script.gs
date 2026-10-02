@@ -1,6 +1,6 @@
 /**
  * Tech24 Activity Tracker — Integrated Weekly Report & Case Timestamp Sync
- * Version: 2.0.0
+ * Version: 2.1.0
  * Description: Fully integrated, modular Google Apps Script for Google Sheets.
  *              Combines automated Weekly Report Generation (Google Docs) and
  *              Case Timestamp Synchronization Bridge for Tampermonkey Userscripts.
@@ -29,7 +29,7 @@ const TIMESTAMP_SYNC_CONFIG = Object.freeze({
 
 const REPORT_CONFIG = Object.freeze({
   SHEET_NAME: "Activity Tracker",
-  DOC_ID: "1TbDEuQiFHeEEjy7Z_DfJ32c6we1s7Il3UOY3dS6n42s",
+  DOC_ID: "1kYbTodcPCiA5ngbQrNF6qwPGGxf5j_Fd1U8IqKO9bE8",
   TABLE_BACKGROUND: "#ffffff",
   TEXT_COLOR: "#000000",
   COVER: {
@@ -137,13 +137,11 @@ const REPORT_CONFIG = Object.freeze({
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
 
-  ui.createMenu("Weekly Report")
-    .addItem("Generate Report", "generateWeeklyReport")
-    .addItem("Clear Data", "clearData")
-    .addToUi();
-
   ui.createMenu("Actions")
     .addItem("Fill Timestamps", "requestSync")
+    .addSeparator()
+    .addItem("Generate Report", "generateWeeklyReport")
+    .addItem("Clear Data", "clearData")
     .addToUi();
 }
 
@@ -497,8 +495,11 @@ class WeeklyReportBuilder {
 
     this.body.appendParagraph("");
 
+    const dataSetValues = this.getDisplayValuesSafely("Data Set", "I1:I1");
     const periodValue =
-      this.toText(this.getDisplayValues("Data Set", "I1:I1")[0][0]) || cover.period;
+      (dataSetValues && dataSetValues.length > 0
+        ? this.toText(dataSetValues[0][0])
+        : "") || cover.period;
     this.appendLabeledParagraph("Period", periodValue);
     this.appendLabeledParagraph("District", cover.district);
     this.appendLabeledParagraph("Company", cover.company);
@@ -888,14 +889,14 @@ class WeeklyReportBuilder {
   buildCaseSummaryByDistrictRows() {
     const thisWeekDisplay = this.getTableDisplayValues("CASE_SUMMARY_BY_DISTRICT");
     const thisWeekRaw = this.getTableRawValues("CASE_SUMMARY_BY_DISTRICT");
-    const lastWeekRaw = this.getRawValues("Last Week Case Summary", "A1:F6");
+    const lastWeekRaw = this.getRawValuesSafely("Last Week Case Summary", "A1:F6");
     const rows = thisWeekDisplay.map((row) => row.slice());
 
     for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
       for (let colIndex = 2; colIndex < rows[rowIndex].length; colIndex += 1) {
         const currentRaw = thisWeekRaw[rowIndex][colIndex];
         const previousRaw =
-          lastWeekRaw[rowIndex] && colIndex - 1 < lastWeekRaw[rowIndex].length
+          lastWeekRaw && lastWeekRaw[rowIndex] && colIndex - 1 < lastWeekRaw[rowIndex].length
             ? lastWeekRaw[rowIndex][colIndex - 1]
             : "";
 
@@ -1059,13 +1060,19 @@ class WeeklyReportBuilder {
     return `${currentValue} (${arrow} ${sign}${roundedPercent}% from ${previousValue})`;
   }
 
-  getDisplayValues(sheetName, rangeA1) {
-    const sheet = this.getSheet(sheetName);
+  getDisplayValuesSafely(sheetName, rangeA1) {
+    const sheet = this.spreadsheet.getSheetByName(sheetName);
+    if (!sheet) {
+      return null;
+    }
     return sheet.getRange(rangeA1).getDisplayValues();
   }
 
-  getRawValues(sheetName, rangeA1) {
-    const sheet = this.getSheet(sheetName);
+  getRawValuesSafely(sheetName, rangeA1) {
+    const sheet = this.spreadsheet.getSheetByName(sheetName);
+    if (!sheet) {
+      return null;
+    }
     return sheet.getRange(rangeA1).getValues();
   }
 
@@ -1163,7 +1170,9 @@ const SpreadsheetRepository = {
   },
 
   clearRangeValuesOnly(spreadsheet, sheetName, rangeA1) {
-    const range = this.getSheetOrThrow(spreadsheet, sheetName).getRange(rangeA1);
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    if (!sheet) return;
+    const range = sheet.getRange(rangeA1);
     this.clearRangeObjectValuesOnly(range);
   },
 
