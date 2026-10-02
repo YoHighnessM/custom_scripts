@@ -1,9 +1,9 @@
 /**
  * Weekly Report Google Docs Formatter
- * Version: 2.2.0
+ * Version: 2.3.0
  * Description: Modular Google Apps Script for formatting Weekly Report Google Docs.
  *              Applies custom typography, weighted font styles, table alignment rules,
- *              column widths, and automatic totals rows with cell merging.
+ *              column widths, and automatic totals rows.
  */
 
 // =============================================================================
@@ -62,6 +62,9 @@ const DOC_STYLE_CONFIG = Object.freeze({
     { columnIndex: 3, widthPoints: 79.2 }, // 1.1 in × 72 pt/in
     { columnIndex: 4, widthPoints: 64.8 }, // 0.9 in × 72 pt/in
   ],
+  CASE_SUMMARY_BY_DISTRICT_COLUMN_WIDTHS: [
+    { columnIndex: 1, widthPoints: 79.2 }, // 1.1 in × 72 pt/in
+  ],
   TABLE_RULES: {
     "District Summary": "CENTER_ALL_EXCEPT_SECOND_LEFT",
     "Case Summary by District": "CENTER_ALL_EXCEPT_SECOND_LEFT",
@@ -78,7 +81,7 @@ const DOC_STYLE_CONFIG = Object.freeze({
     "Weekly Meeting": "ALL_LEFT",
     "Weekly Meeting Overview": "ALL_LEFT",
     "Meetings": "ALL_LEFT",
-    "Changed Spare Parts": "SECOND_CENTER_REST_LEFT",
+    "Changed Spare Parts": "CHANGED_SPARE_PARTS",
     "Per Diem Cost": "FIRST_AND_LAST_CENTER_REST_LEFT",
   },
   TOTAL_ROW_TABLE_TITLES: ["Per Diem Cost"],
@@ -320,6 +323,20 @@ const TypographyStyler = {
             );
           }
 
+          if (capturedTableTitle === "Case Summary by District") {
+            DOC_STYLE_CONFIG.CASE_SUMMARY_BY_DISTRICT_COLUMN_WIDTHS.forEach(
+              (columnWidth) => {
+                requests.push(
+                  this.createTableColumnWidthRequest(
+                    element.startIndex,
+                    columnWidth.columnIndex,
+                    columnWidth.widthPoints
+                  )
+                );
+              }
+            );
+          }
+
           const dynCfg = DOC_STYLE_CONFIG.DYNAMIC_COLUMN_WIDTH_FROM_INDEX_2;
           if (dynCfg.tableNames.has(capturedTableTitle)) {
             const columnCount = this.getTableColumnCount(element.table);
@@ -529,6 +546,7 @@ const TableStyler = {
 
         const horizontalAlignment = this.getHorizontalAlignmentForRule(
           ruleType,
+          rowIndex,
           colIndex,
           colCount
         );
@@ -537,7 +555,7 @@ const TableStyler = {
     }
   },
 
-  getHorizontalAlignmentForRule(ruleType, colIndex, colCount) {
+  getHorizontalAlignmentForRule(ruleType, rowIndex, colIndex, colCount) {
     switch (ruleType) {
       case "CENTER_ALL_EXCEPT_SECOND_LEFT":
         return colIndex === 1
@@ -561,6 +579,14 @@ const TableStyler = {
         return colIndex === 0 || colIndex === colCount - 1
           ? DocumentApp.HorizontalAlignment.CENTER
           : DocumentApp.HorizontalAlignment.LEFT;
+
+      case "CHANGED_SPARE_PARTS":
+        if (rowIndex === 0) {
+          return DocumentApp.HorizontalAlignment.CENTER;
+        }
+        return colIndex === 1
+          ? DocumentApp.HorizontalAlignment.LEFT
+          : DocumentApp.HorizontalAlignment.CENTER;
 
       default:
         return DocumentApp.HorizontalAlignment.LEFT;
@@ -621,47 +647,8 @@ const PerDiemCalculator = {
       cell.editAsText().setBold(
         colIndex === 0 || colIndex === amountColumnIndex
       );
-    }
-
-    // Merge cells 0 through 3 (first 4 columns) or 0 through colCount - 2
-    const currentCells = totalRow.getNumCells();
-    if (currentCells >= 5) {
-      try {
-        const mergedCell = totalRow.getCell(0).merge(totalRow.getCell(3));
-        mergedCell.setText("Total");
-        mergedCell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
-        mergedCell.editAsText().setBold(true);
-        TableStyler.setCellHorizontalAlignment(
-          mergedCell,
-          DocumentApp.HorizontalAlignment.CENTER
-        );
-      } catch (err) {
-        Logger.log("[PerDiem Merge Error]: " + err.message);
-      }
-    } else if (currentCells > 2) {
-      try {
-        const endMergeIndex = currentCells - 2;
-        const mergedCell = totalRow.getCell(0).merge(totalRow.getCell(endMergeIndex));
-        mergedCell.setText("Total");
-        mergedCell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
-        mergedCell.editAsText().setBold(true);
-        TableStyler.setCellHorizontalAlignment(
-          mergedCell,
-          DocumentApp.HorizontalAlignment.CENTER
-        );
-      } catch (err) {
-        Logger.log("[PerDiem Merge Error]: " + err.message);
-      }
-    }
-
-    // Amount cell (last cell)
-    const finalCellCount = totalRow.getNumCells();
-    if (finalCellCount > 0) {
-      const amountCell = totalRow.getCell(finalCellCount - 1);
-      amountCell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
-      amountCell.editAsText().setBold(true);
       TableStyler.setCellHorizontalAlignment(
-        amountCell,
+        cell,
         DocumentApp.HorizontalAlignment.CENTER
       );
     }
