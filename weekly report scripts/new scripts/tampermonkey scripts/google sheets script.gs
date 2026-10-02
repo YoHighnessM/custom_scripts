@@ -1,6 +1,6 @@
 /**
  * Tech24 Activity Tracker — Integrated Weekly Report & Case Timestamp Sync
- * Version: 2.4.0
+ * Version: 2.5.0
  * Description: Fully integrated, modular Google Apps Script for Google Sheets.
  *              Combines automated Weekly Report Generation (Google Docs) and
  *              Case Timestamp Synchronization Bridge for Tampermonkey Userscripts.
@@ -668,11 +668,18 @@ class WeeklyReportBuilder {
   }
 
   addPerDiemCostTable() {
-    const rows = this.filterRowsByAnyFilledCell(
+    const filteredRows = this.filterRowsByAnyFilledCell(
       this.getTableDisplayValues("PER_DIEM_COST")
     );
+    if (filteredRows.length <= 1) {
+      this.addTableSection("Per Diem Cost", filteredRows, { boldFirstRow: true });
+      return;
+    }
+
+    const rows = this.appendTableTotalsRow(filteredRows);
     this.addTableSection("Per Diem Cost", rows, {
       boldFirstRow: true,
+      boldLastRow: true,
     });
   }
 
@@ -913,15 +920,53 @@ class WeeklyReportBuilder {
     text.setForegroundColor(REPORT_CONFIG.TEXT_COLOR);
   }
 
+  appendTableTotalsRow(rows) {
+    if (!rows || rows.length <= 1) {
+      return rows;
+    }
+
+    const colCount = rows[0].length;
+    const lastColIndex = colCount - 1;
+
+    let total = 0;
+    for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+      const val = this.toNumber(rows[rowIndex][lastColIndex]);
+      total += val;
+    }
+
+    const totalRow = new Array(colCount).fill("");
+    totalRow[0] = "Total";
+    totalRow[lastColIndex] = this.formatAmountWithCommas(total);
+
+    return rows.concat([totalRow]);
+  }
+
+  formatAmountWithCommas(value) {
+    if (isNaN(value)) return "0";
+    const isFloat = value % 1 !== 0;
+    const parts = (isFloat ? value.toFixed(2) : String(Math.round(value))).split(".");
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return parts.join(".");
+  }
+
   buildCaseSummaryByDistrictRows() {
-    const thisWeekDisplay = this.getTableDisplayValues("CASE_SUMMARY_BY_DISTRICT");
-    const thisWeekRaw = this.getTableRawValues("CASE_SUMMARY_BY_DISTRICT");
+    let thisWeekDisplay = this.getTableDisplayValues("CASE_SUMMARY_BY_DISTRICT");
+    let thisWeekRaw = this.getTableRawValues("CASE_SUMMARY_BY_DISTRICT");
 
     let lastWeekRaw = null;
     try {
       lastWeekRaw = this.getTableRawValues("LAST_WEEK_CASE_AMOUNT");
     } catch (e) {
       lastWeekRaw = this.getRawValuesSafely("Last Week Case Amount", "A1:F7");
+    }
+
+    // Exclude last row for both tables
+    if (thisWeekDisplay.length > 1) {
+      thisWeekDisplay = thisWeekDisplay.slice(0, -1);
+      thisWeekRaw = thisWeekRaw.slice(0, -1);
+    }
+    if (lastWeekRaw && lastWeekRaw.length > 1) {
+      lastWeekRaw = lastWeekRaw.slice(0, -1);
     }
 
     const rows = thisWeekDisplay.map((row) => row.slice());
@@ -1002,7 +1047,7 @@ class WeeklyReportBuilder {
     }
 
     const hasHeader = this.hasHeaderRow(rows);
-    const header = hasHeader ? [rows[0]] : [];
+    const header = hasHeader ? [["No"].concat(rows[0])] : [["No"]];
     const startIndex = hasHeader ? 1 : 0;
 
     const dataRows = rows
@@ -1012,7 +1057,8 @@ class WeeklyReportBuilder {
         const totalA = this.toNumber(a[a.length - 1]);
         const totalB = this.toNumber(b[b.length - 1]);
         return totalB - totalA; // Descending order
-      });
+      })
+      .map((row, index) => [String(index + 1)].concat(row));
 
     return header.concat(dataRows);
   }
