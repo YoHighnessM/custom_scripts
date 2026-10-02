@@ -1,4 +1,6 @@
 const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
 
 // Helper to simulate browser window environment for testing
 function createBrowserContext() {
@@ -32,9 +34,21 @@ function createBrowserContext() {
 
 createBrowserContext();
 
-// Load userscripts
-require("./tech24-case-timestamp-sync.user.js");
-require("./tech24-sla-duration.user.js");
+// Load userscripts from new tampermonkey scripts directory or fallback
+const syncPath = path.resolve(__dirname, "./weekly report scripts/new scripts/tampermonkey scripts/tech24-case-timestamp-sync.user.js");
+const slaPath = path.resolve(__dirname, "./weekly report scripts/new scripts/tampermonkey scripts/tech24-sla-duration.user.js");
+
+if (fs.existsSync(syncPath)) {
+  require(syncPath);
+} else {
+  require("./tech24-case-timestamp-sync.user.js");
+}
+
+if (fs.existsSync(slaPath)) {
+  require(slaPath);
+} else {
+  require("./tech24-sla-duration.user.js");
+}
 
 const SyncScript = global.window.Tech24TimestampSync;
 const SLAScript = global.window.Tech24SLADuration;
