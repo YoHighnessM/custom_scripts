@@ -581,12 +581,9 @@ const TableStyler = {
           : DocumentApp.HorizontalAlignment.LEFT;
 
       case "CHANGED_SPARE_PARTS":
-        if (rowIndex === 0) {
-          return DocumentApp.HorizontalAlignment.CENTER;
-        }
-        return colIndex === 1
-          ? DocumentApp.HorizontalAlignment.LEFT
-          : DocumentApp.HorizontalAlignment.CENTER;
+        return colIndex === 0 || colIndex === 2
+          ? DocumentApp.HorizontalAlignment.CENTER
+          : DocumentApp.HorizontalAlignment.LEFT;
 
       default:
         return DocumentApp.HorizontalAlignment.LEFT;
