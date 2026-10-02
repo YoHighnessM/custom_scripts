@@ -1,6 +1,6 @@
 /**
  * Tech24 Activity Tracker — Integrated Weekly Report & Case Timestamp Sync
- * Version: 2.5.0
+ * Version: 2.6.0
  * Description: Fully integrated, modular Google Apps Script for Google Sheets.
  *              Combines automated Weekly Report Generation (Google Docs) and
  *              Case Timestamp Synchronization Bridge for Tampermonkey Userscripts.
@@ -687,6 +687,7 @@ class WeeklyReportBuilder {
     const rows = this.excludeColumns(this.buildChangedSparePartsRows(), [6]);
     this.addTableSection("Changed Spare Parts", rows, {
       boldFirstRow: true,
+      boldFirstColumn: true,
     });
   }
 
@@ -883,6 +884,7 @@ class WeeklyReportBuilder {
           (boldFirstColumn && cellIndex === 0) ||
           (boldLastRow && rowIndex === rowCount - 1);
 
+        cell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
         cell.setBackgroundColor(REPORT_CONFIG.TABLE_BACKGROUND);
         text.setBold(shouldBeBold);
         text.setForegroundColor(REPORT_CONFIG.TEXT_COLOR);
