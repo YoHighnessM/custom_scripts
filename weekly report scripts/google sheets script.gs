@@ -684,7 +684,7 @@ class WeeklyReportBuilder {
   }
 
   addChangedSparePartsTable() {
-    const rows = this.excludeColumns(this.buildChangedSparePartsRows(), [6]);
+    const rows = this.buildChangedSparePartsRows();
     this.addTableSection("Changed Spare Parts", rows, {
       boldFirstRow: true,
       boldFirstColumn: true,
