@@ -220,4 +220,30 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
   console.log("  ✅ Google Sheets Duration Calculation Engine passed!");
 }
 
+// --- Test 6: Archive & Reset Period String Formatting ---
+{
+  console.log("Testing Archive & Reset Period String Formatting...");
+  const gasReportContent = fs.readFileSync(path.resolve(__dirname, "weekly report scripts/google sheets script.gs"), "utf8");
+
+  const contextFunc = new Function("global", `
+    ${gasReportContent}
+    return {
+      getWeeklyReportPeriod
+    };
+  `);
+
+  const reportEngine = contextFunc(global);
+
+  // Test period string formatting for a fixed date (e.g., Wed Oct 1 2026)
+  // Saturday prior is Sep 26, Friday following is Oct 2, 2026 -> "September 26 to October 02, 2026"
+  const testRefDate = new Date(2026, 9, 1); // Oct 1, 2026
+  const periodStr = reportEngine.getWeeklyReportPeriod(testRefDate);
+  assert.strictEqual(periodStr, "September 26 to October 02, 2026");
+
+  const backupFileName = `Activity Tracker | ${periodStr}`;
+  assert.strictEqual(backupFileName, "Activity Tracker | September 26 to October 02, 2026");
+
+  console.log("  ✅ Archive & Reset Period String Formatting passed!");
+}
+
 console.log("\n🎉 All unit tests passed successfully!");
