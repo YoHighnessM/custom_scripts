@@ -194,25 +194,26 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
   assert.strictEqual(gasEngine.getZoneForMachineId("M002"), 2);
   assert.strictEqual(gasEngine.getZoneForMachineId("M003"), 3);
 
-  // Test 5b: Standard Duration Calculation & Target Format
-  // Start: 05-10-2026 06:20 AM, End: 05-10-2026 08:05 AM (1h 45m duration)
-  // Zone 1 = 7 hours target -> Tgt: 05-10-2026 01:20 PM
+  // Test 5b: Standard Working Hours Duration Calculation & Target Format
+  // Working hours: 8:00 AM to 5:00 PM (Mon-Sat)
+  // Start: 05-10-2026 08:20 AM, End: 05-10-2026 10:05 AM (1h 45m duration inside business window)
+  // Zone 1 = 7 hours target -> Start 8:20 AM + 7h = Tgt: 05-10-2026 03:20 PM
   const regDate = "05-10-2026";
-  const regTime = "06:20 AM";
+  const regTime = "08:20 AM";
   const closedDate = "05-10-2026";
-  const closedTime = "08:05 AM";
+  const closedTime = "10:05 AM";
 
   const result1 = gasEngine.calculateRowDurationData("M001", regDate, regTime, closedDate, closedTime);
   assert.ok(result1);
   assert.strictEqual(result1.durationStr, "1h 45m");
   assert.strictEqual(result1.zone, 1);
-  assert.strictEqual(result1.targetTimeStr, "05-10-2026 01:20 PM");
+  assert.strictEqual(result1.targetTimeStr, "05-10-2026 03:20 PM");
   assert.strictEqual(result1.isOverdue, false);
-  assert.strictEqual(result1.outputString, "1h 45m  •  Z1  •  Tgt: 05-10-2026 01:20 PM");
+  assert.strictEqual(result1.outputString, "1h 45m  •  Z1  •  Tgt: 05-10-2026 03:20 PM");
 
   // Test 5c: Overdue SLA Highlighting Check
-  // Start: 05-10-2026 06:20 AM, Zone 1 (7h target -> 1:20 PM). End: 05-10-2026 02:00 PM (Overdue)
-  const resultOverdue = gasEngine.calculateRowDurationData("M001", regDate, regTime, closedDate, "02:00 PM");
+  // Start: 05-10-2026 08:20 AM, Zone 1 (7h target -> 3:20 PM). End: 05-10-2026 04:00 PM (Overdue)
+  const resultOverdue = gasEngine.calculateRowDurationData("M001", regDate, regTime, closedDate, "04:00 PM");
   assert.ok(resultOverdue);
   assert.strictEqual(resultOverdue.isOverdue, true);
 

@@ -35,6 +35,9 @@ const DURATION_CONFIG = Object.freeze({
   ZONE_COL_SHEET: 8,    // Column H
   START_ROW: 4,
   LIGHT_RED_COLOR: "#fce8e6",
+  BUSINESS_START_HOUR: 8,  // 8:00 AM
+  BUSINESS_END_HOUR: 17,   // 5:00 PM
+  BUSINESS_DAYS: Object.freeze([1, 2, 3, 4, 5, 6]), // Mon-Sat, Sunday(0) excluded
   COLUMNS: Object.freeze({
     MACHINE_ID: 3,   // Column C
     REG_DATE: 15,    // Column O
@@ -49,6 +52,96 @@ const DURATION_CONFIG = Object.freeze({
     3: 14,
   }),
 });
+
+const BusinessCalendar = {
+  isBusinessDay(date) {
+    return DURATION_CONFIG.BUSINESS_DAYS.indexOf(date.getDay()) !== -1;
+  },
+
+  nextBusinessDayStart(date) {
+    const d = new Date(date);
+    d.setDate(d.getDate() + 1);
+    d.setHours(DURATION_CONFIG.BUSINESS_START_HOUR, 0, 0, 0);
+    while (!this.isBusinessDay(d)) {
+      d.setDate(d.getDate() + 1);
+    }
+    return d;
+  },
+
+  clampToBusinessWindow(date) {
+    const d = new Date(date);
+    if (this.isBusinessDay(d)) {
+      const startOfDay = new Date(d);
+      startOfDay.setHours(DURATION_CONFIG.BUSINESS_START_HOUR, 0, 0, 0);
+      const endOfDay = new Date(d);
+      endOfDay.setHours(DURATION_CONFIG.BUSINESS_END_HOUR, 0, 0, 0);
+
+      if (d < startOfDay) return startOfDay;
+      if (d >= endOfDay) return this.nextBusinessDayStart(d);
+      return d;
+    }
+    return this.nextBusinessDayStart(d);
+  },
+
+  addBusinessHours(start, hours) {
+    let remainingMinutes = hours * 60;
+    let cursor = this.clampToBusinessWindow(start);
+
+    while (remainingMinutes > 0) {
+      const endOfDay = new Date(cursor);
+      endOfDay.setHours(DURATION_CONFIG.BUSINESS_END_HOUR, 0, 0, 0);
+
+      const minutesLeftToday = (endOfDay.getTime() - cursor.getTime()) / 60000;
+
+      if (minutesLeftToday >= remainingMinutes) {
+        cursor = new Date(cursor.getTime() + remainingMinutes * 60000);
+        remainingMinutes = 0;
+      } else {
+        remainingMinutes -= minutesLeftToday;
+        cursor = this.nextBusinessDayStart(cursor);
+      }
+    }
+    return cursor;
+  },
+
+  businessMinutesBetween(from, to) {
+    let cursor = new Date(from);
+    let total = 0;
+
+    while (cursor < to) {
+      if (!this.isBusinessDay(cursor)) {
+        cursor = this.nextBusinessDayStart(cursor);
+        continue;
+      }
+      const startOfDay = new Date(cursor);
+      startOfDay.setHours(DURATION_CONFIG.BUSINESS_START_HOUR, 0, 0, 0);
+      const endOfDay = new Date(cursor);
+      endOfDay.setHours(DURATION_CONFIG.BUSINESS_END_HOUR, 0, 0, 0);
+
+      if (cursor < startOfDay) {
+        cursor = startOfDay;
+        continue;
+      }
+      if (cursor >= endOfDay) {
+        cursor = this.nextBusinessDayStart(cursor);
+        continue;
+      }
+
+      const segmentEnd = to < endOfDay ? to : endOfDay;
+      total += (segmentEnd.getTime() - cursor.getTime()) / 60000;
+      cursor = segmentEnd >= endOfDay ? this.nextBusinessDayStart(segmentEnd) : segmentEnd;
+    }
+    return total;
+  },
+
+  calculateDurationMinutes(startDate, endDate) {
+    if (startDate.getTime() <= endDate.getTime()) {
+      return this.businessMinutesBetween(startDate, endDate);
+    } else {
+      return -this.businessMinutesBetween(endDate, startDate);
+    }
+  }
+};
 
 // =============================================================================
 // 2. Document Properties Manager
@@ -241,10 +334,10 @@ function calculateRowDurationData(machineId, regDate, regTime, closedDate, close
   const zone = getZoneForMachineId(machineId);
   const targetHours = DURATION_CONFIG.ZONE_HOURS[zone] || 7;
 
-  const diffMs = endDate.getTime() - startDate.getTime();
-  const durationStr = formatDurationMs(diffMs);
+  const bizDurationMinutes = BusinessCalendar.calculateDurationMinutes(startDate, endDate);
+  const durationStr = formatDurationMs(bizDurationMinutes * 60 * 1000);
 
-  const targetDate = new Date(startDate.getTime() + targetHours * 60 * 60 * 1000);
+  const targetDate = BusinessCalendar.addBusinessHours(startDate, targetHours);
   const targetTimeStr = formatTargetDateTime(targetDate);
 
   const outputString = `${durationStr}  •  Z${zone}  •  Tgt: ${targetTimeStr}`;
