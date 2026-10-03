@@ -456,7 +456,7 @@ function calculateRowDurationData(machineId, regDate, regTime, closedDate, close
   const targetDate = new Date(startDate.getTime() + targetHours * 60 * 60 * 1000);
   const targetTimeStr = formatTargetDateTime(targetDate);
 
-  const outputString = `${durationStr} | Z${zone} | Tgt: ${targetTimeStr}`;
+  const outputString = `${durationStr}  •  Z${zone}  •  Tgt: ${targetTimeStr}`;
   const isOverdue = endDate.getTime() > targetDate.getTime();
 
   return {
@@ -485,6 +485,15 @@ function updateDurationForRow(sheet, rowNum) {
 
   const resultCell = sheet.getRange(rowNum, DURATION_CONFIG.COLUMNS.DURATION);
 
+  const isFilled = (val) => val !== null && val !== undefined && String(val).trim() !== "" && String(val).trim() !== "-";
+
+  // Check if all 4 timestamp cells are filled
+  if (!isFilled(regDate) || !isFilled(regTime) || !isFilled(closedDate) || !isFilled(closedTime)) {
+    resultCell.clearContent();
+    resultCell.setBackground(null);
+    return;
+  }
+
   const calcData = calculateRowDurationData(
     machineId,
     regDate,
@@ -494,6 +503,8 @@ function updateDurationForRow(sheet, rowNum) {
   );
 
   if (!calcData) {
+    resultCell.clearContent();
+    resultCell.setBackground(null);
     return;
   }
 
