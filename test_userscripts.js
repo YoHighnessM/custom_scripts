@@ -145,4 +145,78 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
   console.log("  ✅ Header Matching passed!");
 }
 
+// --- Test 5: Google Sheets Script Duration Calculation Engine ---
+{
+  console.log("Testing Google Sheets Duration Calculation...");
+  const gasScriptContent = fs.readFileSync(path.resolve(__dirname, "google-apps-script-bridge.gs"), "utf8");
+
+  // Mock GAS environment
+  global.SpreadsheetApp = {
+    openById() {
+      return {
+        getSheetByName() {
+          return {
+            getLastRow() { return 10; },
+            getRange() {
+              return {
+                getValues() {
+                  // Sheet Col B (idx 1) = Machine ID, Sheet Col H (idx 7) = Zone
+                  return [
+                    ["", "M001", "", "", "", "", "", "1"],
+                    ["", "M002", "", "", "", "", "", "2"],
+                    ["", "M003", "", "", "", "", "", "3"]
+                  ];
+                }
+              };
+            }
+          };
+        }
+      };
+    }
+  };
+
+  // Evaluate GAS calculation functions in sandbox context
+  const contextFunc = new Function("global", `
+    ${gasScriptContent}
+    return {
+      parseDateTime,
+      formatTargetDateTime,
+      formatDurationMs,
+      calculateRowDurationData,
+      getZoneForMachineId
+    };
+  `);
+
+  const gasEngine = contextFunc(global);
+
+  // Test 5a: Zone Lookup
+  assert.strictEqual(gasEngine.getZoneForMachineId("M001"), 1);
+  assert.strictEqual(gasEngine.getZoneForMachineId("M002"), 2);
+  assert.strictEqual(gasEngine.getZoneForMachineId("M003"), 3);
+
+  // Test 5b: Standard Duration Calculation & Target Format
+  // Start: 05-10-2026 06:20 AM, End: 05-10-2026 08:05 AM (1h 45m duration)
+  // Zone 1 = 7 hours target -> Tgt: 05-10-2026 01:20 PM
+  const regDate = "05-10-2026";
+  const regTime = "06:20 AM";
+  const closedDate = "05-10-2026";
+  const closedTime = "08:05 AM";
+
+  const result1 = gasEngine.calculateRowDurationData("M001", regDate, regTime, closedDate, closedTime);
+  assert.ok(result1);
+  assert.strictEqual(result1.durationStr, "1h 45m");
+  assert.strictEqual(result1.zone, 1);
+  assert.strictEqual(result1.targetTimeStr, "05-10-2026 01:20 PM");
+  assert.strictEqual(result1.isOverdue, false);
+  assert.strictEqual(result1.outputString, "1h 45m | Z1 | Tgt: 05-10-2026 01:20 PM");
+
+  // Test 5c: Overdue SLA Highlighting Check
+  // Start: 05-10-2026 06:20 AM, Zone 1 (7h target -> 1:20 PM). End: 05-10-2026 02:00 PM (Overdue)
+  const resultOverdue = gasEngine.calculateRowDurationData("M001", regDate, regTime, closedDate, "02:00 PM");
+  assert.ok(resultOverdue);
+  assert.strictEqual(resultOverdue.isOverdue, true);
+
+  console.log("  ✅ Google Sheets Duration Calculation Engine passed!");
+}
+
 console.log("\n🎉 All unit tests passed successfully!");

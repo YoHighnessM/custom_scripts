@@ -1,9 +1,10 @@
 /**
  * Tech24 Activity Tracker — Integrated Weekly Report & Case Timestamp Sync
- * Version: 2.6.0
+ * Version: 2.7.0
  * Description: Fully integrated, modular Google Apps Script for Google Sheets.
- *              Combines automated Weekly Report Generation (Google Docs) and
- *              Case Timestamp Synchronization Bridge for Tampermonkey Userscripts.
+ *              Combines automated Weekly Report Generation (Google Docs),
+ *              Case Timestamp Synchronization Bridge for Tampermonkey Userscripts,
+ *              and Automated Duration & SLA Target Calculation.
  */
 
 // =============================================================================
@@ -24,6 +25,28 @@ const TIMESTAMP_SYNC_CONFIG = Object.freeze({
     SYNC_STATUS: "syncStatus",
     LAST_RUN_SUMMARY: "lastRunSummary",
     LAST_RUN_TIME: "lastRunTime",
+  }),
+});
+
+const DURATION_CONFIG = Object.freeze({
+  MASTER_DB_ID: "10MXO_TBs00rG1RutyA9sjrmygse8J-WbWrNL011vjRc",
+  SHEET_NAME: "DB_Machines",
+  MACHINE_COL_SHEET: 2, // Column B
+  ZONE_COL_SHEET: 8,    // Column H
+  START_ROW: 4,
+  LIGHT_RED_COLOR: "#fce8e6",
+  COLUMNS: Object.freeze({
+    MACHINE_ID: 3,   // Column C
+    REG_DATE: 15,    // Column O
+    REG_TIME: 16,    // Column P
+    CLOSED_DATE: 17, // Column Q
+    CLOSED_TIME: 18, // Column R
+    DURATION: 19,    // Column S
+  }),
+  ZONE_HOURS: Object.freeze({
+    1: 7,
+    2: 8,
+    3: 14,
   }),
 });
 
@@ -166,10 +189,25 @@ function onOpen() {
 
   ui.createMenu("Actions")
     .addItem("Fill Timestamps", "requestSync")
+    .addItem("Calculate Durations", "updateAllDurations")
     .addSeparator()
     .addItem("Generate Report", "generateWeeklyReport")
     .addItem("Clear Data", "clearData")
     .addToUi();
+}
+
+function onEdit(e) {
+  if (!e || !e.range) return;
+  const sheet = e.range.getSheet();
+  const startRow = e.range.getRow();
+  const numRows = e.range.getNumRows();
+
+  for (let i = 0; i < numRows; i++) {
+    const row = startRow + i;
+    if (row >= 2) {
+      updateDurationForRow(sheet, row);
+    }
+  }
 }
 
 function generateWeeklyReport() {
@@ -252,7 +290,233 @@ function clearDataFeb25() {
 }
 
 // =============================================================================
-// 3. Case Timestamp Sync — Bridge Functions & Web App
+// 3. Duration & SLA Target Calculation Engine
+// =============================================================================
+let machineZoneCache_ = null;
+
+function getMachineZoneMap() {
+  if (machineZoneCache_) {
+    return machineZoneCache_;
+  }
+  const map = {};
+  try {
+    const masterDb = SpreadsheetApp.openById(DURATION_CONFIG.MASTER_DB_ID);
+    const sheet = masterDb.getSheetByName(DURATION_CONFIG.SHEET_NAME);
+    if (sheet) {
+      const lastRow = sheet.getLastRow();
+      if (lastRow >= DURATION_CONFIG.START_ROW) {
+        const numRows = lastRow - DURATION_CONFIG.START_ROW + 1;
+        const data = sheet
+          .getRange(
+            DURATION_CONFIG.START_ROW,
+            1,
+            numRows,
+            DURATION_CONFIG.ZONE_COL_SHEET
+          )
+          .getValues();
+        data.forEach((row) => {
+          const mId = String(row[DURATION_CONFIG.MACHINE_COL_SHEET - 1] || "")
+            .trim()
+            .toLowerCase();
+          const zoneVal = row[DURATION_CONFIG.ZONE_COL_SHEET - 1];
+          if (mId) {
+            const zNum = parseInt(zoneVal, 10);
+            map[mId] = isNaN(zNum) ? 1 : zNum;
+          }
+        });
+      }
+    }
+  } catch (e) {
+    Logger.log(`[getMachineZoneMap Error]: ${e.message}`);
+  }
+  machineZoneCache_ = map;
+  return map;
+}
+
+function getZoneForMachineId(machineId) {
+  if (!machineId) return 1;
+  const key = String(machineId).trim().toLowerCase();
+  const map = getMachineZoneMap();
+  return map[key] !== undefined ? map[key] : 1;
+}
+
+function parseDateTime(dateVal, timeVal) {
+  if (dateVal === null || dateVal === undefined || dateVal === "") return null;
+
+  let year, month, day;
+
+  if (dateVal instanceof Date) {
+    year = dateVal.getFullYear();
+    month = dateVal.getMonth();
+    day = dateVal.getDate();
+  } else {
+    const str = String(dateVal).trim();
+    if (!str || str === "-") return null;
+
+    let m = str.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+    if (m) {
+      year = parseInt(m[1], 10);
+      month = parseInt(m[2], 10) - 1;
+      day = parseInt(m[3], 10);
+    } else {
+      const digits = str.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+      if (digits) {
+        let p1 = parseInt(digits[1], 10);
+        let p2 = parseInt(digits[2], 10);
+        let p3 = parseInt(digits[3], 10);
+        if (p3 < 100) p3 += 2000;
+
+        if (p1 > 12) {
+          day = p1;
+          month = p2 - 1;
+          year = p3;
+        } else if (p2 > 12) {
+          month = p1 - 1;
+          day = p2;
+          year = p3;
+        } else {
+          // Default: DD-MM-YYYY format
+          day = p1;
+          month = p2 - 1;
+          year = p3;
+        }
+      } else {
+        const d = new Date(str);
+        if (isNaN(d.getTime())) return null;
+        year = d.getFullYear();
+        month = d.getMonth();
+        day = d.getDate();
+      }
+    }
+  }
+
+  let hours = 0;
+  let minutes = 0;
+
+  if (timeVal !== null && timeVal !== undefined && timeVal !== "") {
+    if (timeVal instanceof Date) {
+      hours = timeVal.getHours();
+      minutes = timeVal.getMinutes();
+    } else {
+      const tStr = String(timeVal).trim();
+      const tm = tStr.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?/i);
+      if (tm) {
+        hours = parseInt(tm[1], 10);
+        minutes = parseInt(tm[2], 10);
+        const ampm = tm[3];
+        if (ampm) {
+          const isPM = ampm.toUpperCase() === "PM";
+          if (isPM && hours !== 12) hours += 12;
+          if (!isPM && hours === 12) hours = 0;
+        }
+      }
+    }
+  }
+
+  return new Date(year, month, day, hours, minutes, 0);
+}
+
+function formatTargetDateTime(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const day = pad(date.getDate());
+  const month = pad(date.getMonth() + 1);
+  const year = date.getFullYear();
+
+  let hours = date.getHours();
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+
+  return `${day}-${month}-${year} ${pad(hours)}:${pad(date.getMinutes())} ${ampm}`;
+}
+
+function formatDurationMs(diffMs) {
+  const totalMinutes = Math.round(diffMs / (1000 * 60));
+  const sign = totalMinutes < 0 ? "-" : "";
+  const abs = Math.abs(totalMinutes);
+  const h = Math.floor(abs / 60);
+  const m = abs % 60;
+  return `${sign}${h}h ${m}m`;
+}
+
+function calculateRowDurationData(machineId, regDate, regTime, closedDate, closedTime) {
+  const startDate = parseDateTime(regDate, regTime);
+  const endDate = parseDateTime(closedDate, closedTime);
+
+  if (!startDate || !endDate) {
+    return null;
+  }
+
+  const zone = getZoneForMachineId(machineId);
+  const targetHours = DURATION_CONFIG.ZONE_HOURS[zone] || 7;
+
+  const diffMs = endDate.getTime() - startDate.getTime();
+  const durationStr = formatDurationMs(diffMs);
+
+  const targetDate = new Date(startDate.getTime() + targetHours * 60 * 60 * 1000);
+  const targetTimeStr = formatTargetDateTime(targetDate);
+
+  const outputString = `${durationStr} | Z${zone} | Tgt: ${targetTimeStr}`;
+  const isOverdue = endDate.getTime() > targetDate.getTime();
+
+  return {
+    outputString,
+    isOverdue,
+    zone,
+    durationStr,
+    targetTimeStr,
+    startDate,
+    endDate,
+    targetDate,
+  };
+}
+
+function updateDurationForRow(sheet, rowNum) {
+  if (rowNum < 2) return;
+
+  const range = sheet.getRange(rowNum, 1, 1, DURATION_CONFIG.COLUMNS.DURATION);
+  const values = range.getValues()[0];
+
+  const machineId = values[DURATION_CONFIG.COLUMNS.MACHINE_ID - 1];
+  const regDate = values[DURATION_CONFIG.COLUMNS.REG_DATE - 1];
+  const regTime = values[DURATION_CONFIG.COLUMNS.REG_TIME - 1];
+  const closedDate = values[DURATION_CONFIG.COLUMNS.CLOSED_DATE - 1];
+  const closedTime = values[DURATION_CONFIG.COLUMNS.CLOSED_TIME - 1];
+
+  const resultCell = sheet.getRange(rowNum, DURATION_CONFIG.COLUMNS.DURATION);
+
+  const calcData = calculateRowDurationData(
+    machineId,
+    regDate,
+    regTime,
+    closedDate,
+    closedTime
+  );
+
+  if (!calcData) {
+    return;
+  }
+
+  resultCell.setValue(calcData.outputString);
+  if (calcData.isOverdue) {
+    resultCell.setBackground(DURATION_CONFIG.LIGHT_RED_COLOR);
+  } else {
+    resultCell.setBackground(null);
+  }
+}
+
+function updateAllDurations(sheet) {
+  const targetSheet = sheet || SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const lastRow = targetSheet.getLastRow();
+  if (lastRow < 2) return;
+
+  for (let r = 2; r <= lastRow; r++) {
+    updateDurationForRow(targetSheet, r);
+  }
+}
+
+// =============================================================================
+// 4. Case Timestamp Sync — Bridge Functions & Web App
 // =============================================================================
 function requestSync() {
   PropertyManager.setMany({
@@ -428,6 +692,8 @@ const TimestampSyncRepository = {
 
     if (modified) {
       range.setValues([currentValues]);
+      // Trigger duration calculation on row write
+      updateDurationForRow(sheet, row);
     }
 
     return { row, modified };
@@ -449,7 +715,7 @@ const ResponseHandler = {
 };
 
 // =============================================================================
-// 4. Weekly Report Builder Engine
+// 5. Weekly Report Builder Engine
 // =============================================================================
 class WeeklyReportBuilder {
   constructor(spreadsheet, doc) {
@@ -962,7 +1228,6 @@ class WeeklyReportBuilder {
       lastWeekRaw = this.getRawValuesSafely("Last Week Case Amount", "A1:F7");
     }
 
-    // Exclude last row for both tables
     if (thisWeekDisplay.length > 1) {
       thisWeekDisplay = thisWeekDisplay.slice(0, -1);
       thisWeekRaw = thisWeekRaw.slice(0, -1);
@@ -1058,7 +1323,7 @@ class WeeklyReportBuilder {
       .sort((a, b) => {
         const totalA = this.toNumber(a[a.length - 1]);
         const totalB = this.toNumber(b[b.length - 1]);
-        return totalB - totalA; // Descending order
+        return totalB - totalA;
       })
       .map((row, index) => [String(index + 1)].concat(row));
 
@@ -1245,7 +1510,7 @@ class WeeklyReportBuilder {
 }
 
 // =============================================================================
-// 5. Spreadsheet Repository & Metadata Helpers
+// 6. Spreadsheet Repository & Metadata Helpers
 // =============================================================================
 const SpreadsheetRepository = {
   getSheetOrThrow(spreadsheet, sheetName) {
