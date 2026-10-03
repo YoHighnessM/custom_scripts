@@ -269,7 +269,7 @@ function getWeeklyReportPeriod(refDate = new Date()) {
 
   const pad = (n) => String(n).padStart(2, "0");
   const startStr = `${monthNames[saturday.getMonth()]} ${pad(saturday.getDate())}`;
-  const endStr = `${monthNames[friday.getMonth()]} ${pad(friday.getDate())}`;
+  const endStr = `${monthNames[friday.getMonth()]} ${pad(friday.getDate())}, ${friday.getFullYear()}`;
 
   return `${startStr} to ${endStr}`;
 }
@@ -285,7 +285,7 @@ function onOpen() {
     .addItem("Calculate Durations", "updateAllDurations")
     .addSeparator()
     .addItem("Generate Report", "generateWeeklyReport")
-    .addItem("Clear Data", "clearData")
+    .addItem("Archive and Reset", "archiveAndReset")
     .addToUi();
 }
 
@@ -322,11 +322,11 @@ function generateWeeklyReportFeb25() {
   generateWeeklyReport();
 }
 
-function clearData() {
+function archiveAndReset() {
   const ui = SpreadsheetApp.getUi();
   const confirmation = ui.alert(
-    "Clear Data",
-    "This will clear configured data ranges while preserving formulas. Continue?",
+    "Archive and Reset",
+    "This will archive a copy of this spreadsheet to 'Weekly file backup' and reset configured data ranges. Continue?",
     ui.ButtonSet.YES_NO
   );
 
@@ -336,50 +336,105 @@ function clearData() {
 
   try {
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+    // 1. Determine period string and backup file name
+    let periodStr = "";
+    const dataSetSheet = spreadsheet.getSheetByName("Data Set");
+    if (dataSetSheet) {
+      const val = dataSetSheet.getRange("I1").getDisplayValue();
+      if (val && val.trim() !== "") {
+        periodStr = val.trim();
+      }
+    }
+    if (!periodStr) {
+      periodStr = getWeeklyReportPeriod();
+    }
+
+    const backupFileName = `Activity Tracker | ${periodStr}`;
+
+    // 2. Archive copy to folder 'Weekly file backup'
+    const backupFolderId = "1OGVZscnmDDAsjNAXixlHrrQo2sS-qBQU";
+    const backupFolder = DriveApp.getFolderById(backupFolderId);
+    const currentFile = DriveApp.getFileById(spreadsheet.getId());
+    currentFile.makeCopy(backupFileName, backupFolder);
+
+    // 3. Save values from sheet 'Case Summary' range C2:G7 before resetting
+    let caseSummaryValues = null;
+    const caseSummarySheet = spreadsheet.getSheetByName("Case Summary");
+    if (caseSummarySheet) {
+      caseSummaryValues = caseSummarySheet.getRange("C2:G7").getValues();
+    }
+
+    // 4. PerformReset/Clear of specified ranges
     const tableMetadata = SpreadsheetRepository.getTableMetadata(spreadsheet);
 
-    SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "Data Entry Form", "A3:P300");
-    SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "Data Entry Form", "R3:V300");
-    SpreadsheetRepository.clearTableBodyValuesOnly(
-      spreadsheet,
-      tableMetadata,
-      "CASES_CLOSED_AFTER_REGISTRATION_DATE"
-    );
+    // - sheet (Daily Activity Tracker) range (A2:Y200), clear values and remove background highlighting from S2:S200
+    const dailySheet = spreadsheet.getSheetByName("Daily Activity Tracker");
+    if (dailySheet) {
+      SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "Daily Activity Tracker", "A2:Y200");
+      dailySheet.getRange("S2:S200").setBackground(null);
+    }
+
+    // - sheet (No Case Tracker) range (A2:E100)
+    SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "No Case Tracker", "A2:E100");
+
+    // - sheet (Post-Reg & Ongoing Cases): table (Post Reg Cases) (G2:G) and table (Ongoing Cases)
+    try {
+      const postRegTableRange = SpreadsheetRepository.getTableRange(
+        spreadsheet,
+        tableMetadata,
+        SpreadsheetRepository.getTableSource("CASES_CLOSED_AFTER_REGISTRATION_DATE")
+      );
+      if (postRegTableRange && postRegTableRange.getNumRows() > 1) {
+        const colGRange = postRegTableRange.offset(1, 6, postRegTableRange.getNumRows() - 1, 1);
+        SpreadsheetRepository.clearRangeObjectValuesOnly(colGRange);
+      }
+    } catch (e) {
+      SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "Post-Reg & Ongoing Cases", "G2:G");
+    }
     SpreadsheetRepository.clearTableBodyValuesOnly(spreadsheet, tableMetadata, "ONGOING_CASES");
-    SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "SLA Penalities", "A2:A20");
-    SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "SLA Penalities", "G2:G20");
-    SpreadsheetRepository.clearTableBodyValuesOnly(spreadsheet, tableMetadata, "PM_SUMMARY", [
-      3,
-      4,
-      5,
-    ]);
+
+    // - sheet (PM Summary): table (PM amount by district) (D2:F7) -> col indices 3, 4, 5
+    SpreadsheetRepository.clearTableBodyValuesOnly(spreadsheet, tableMetadata, "PM_SUMMARY", [3, 4, 5]);
+
+    // - sheet (Tasks & Challenges): table (Tasks) and table (Challenges)
     SpreadsheetRepository.clearTableBodyValuesOnly(spreadsheet, tableMetadata, "WEEKLY_TASKS");
-    SpreadsheetRepository.clearTableBodyValuesOnly(
-      spreadsheet,
-      tableMetadata,
-      "WEEKLY_MEETING_OVERVIEW"
-    );
-    SpreadsheetRepository.clearTableBodyValuesOnly(spreadsheet, tableMetadata, "PER_DIEM_COST");
     SpreadsheetRepository.clearTableBodyValuesOnly(spreadsheet, tableMetadata, "CHALLENGES");
-    SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "Last Week Case Summary", "B2:F6");
+
+    // - sheet (Meetings): table (Meetings)
+    SpreadsheetRepository.clearTableBodyValuesOnly(spreadsheet, tableMetadata, "WEEKLY_MEETING_OVERVIEW");
+
+    // - sheet (Per Diem Cost): table (Per Diem Cost)
+    SpreadsheetRepository.clearTableBodyValuesOnly(spreadsheet, tableMetadata, "PER_DIEM_COST");
+
+    // - sheet (Changed Spare Parts): range or table name (H2:H20)
+    const changedSpareSheet = spreadsheet.getSheetByName("Changed Spare Parts");
+    if (changedSpareSheet) {
+      SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "Changed Spare Parts", "H2:H20");
+    }
+
+    // - sheet (Last Week Case Amount): range (B2:F7)
     SpreadsheetRepository.clearRangeValuesOnly(spreadsheet, "Last Week Case Amount", "B2:F7");
 
-    SpreadsheetRepository.uncheckTableBodyColumn(
-      spreadsheet,
-      tableMetadata,
-      "CHANGED_SPARE_PARTS",
-      8
-    );
+    // 5. Populate (Last Week Case Amount) range B2:F7 with saved values from (Case Summary) C2:G7
+    const lastWeekSheet = spreadsheet.getSheetByName("Last Week Case Amount");
+    if (lastWeekSheet && caseSummaryValues) {
+      lastWeekSheet.getRange("B2:F7").setValues(caseSummaryValues);
+    }
 
-    ui.alert("Configured data ranges were cleared successfully.");
+    ui.alert(`Archive created successfully as "${backupFileName}" and data ranges have been reset.`);
   } catch (error) {
-    ui.alert(`Failed to clear data: ${error.message}`);
+    ui.alert(`Failed to archive and reset: ${error.message}`);
     throw error;
   }
 }
 
+function clearData() {
+  archiveAndReset();
+}
+
 function clearDataFeb25() {
-  clearData();
+  archiveAndReset();
 }
 
 // =============================================================================
