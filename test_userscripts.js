@@ -208,7 +208,7 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
   assert.strictEqual(result1.zone, 1);
   assert.strictEqual(result1.targetTimeStr, "05-10-2026 01:20 PM");
   assert.strictEqual(result1.isOverdue, false);
-  assert.strictEqual(result1.outputString, "1h 45m | Z1 | Tgt: 05-10-2026 01:20 PM");
+  assert.strictEqual(result1.outputString, "1h 45m  •  Z1  •  Tgt: 05-10-2026 01:20 PM");
 
   // Test 5c: Overdue SLA Highlighting Check
   // Start: 05-10-2026 06:20 AM, Zone 1 (7h target -> 1:20 PM). End: 05-10-2026 02:00 PM (Overdue)
