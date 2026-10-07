@@ -278,7 +278,7 @@
       let autoZone = "1";
       if (districtIdx !== -1 && cells.length > districtIdx) {
         const districtText = cells[districtIdx].textContent.trim().toLowerCase();
-        if (districtText.includes("hawassa") || districtText.includes("Wolaita")) {
+        if (districtText.includes("hawassa") || districtText.includes("wolaita")) {
           autoZone = "2";
         } else if (districtText.includes("shashemene")) {
           autoZone = "3";
