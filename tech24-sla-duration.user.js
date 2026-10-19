@@ -4,6 +4,7 @@
 // @version      1.2
 // @description  Calculates business-hour SLA durations for Tech24 dashboard.
 // @match        https://tech24et.com/cases*
+// @match        https://dashboard.tech24et.com/cases*
 // @updateURL    https://raw.githubusercontent.com/YoHighnessM/custom_scripts/main/tech24-sla-duration.user.js
 // @downloadURL  https://raw.githubusercontent.com/YoHighnessM/custom_scripts/main/tech24-sla-duration.user.js
 // @grant        none
@@ -24,7 +25,8 @@
     CASE_ID_HEADER: "case id",
     START_HEADER: "start",
     END_HEADER: "end",
-    DISTRICT_HEADER: "district"
+    DISTRICT_HEADER: "district",
+    STATUS_HEADER: "status"
   });
 
   // Active timers for open-case live countdowns (caseId -> intervalId)
@@ -240,6 +242,9 @@
         if (headerKey === CONFIG.DISTRICT_HEADER) {
           return text.includes("district") || text.includes("zone") || text.includes("region");
         }
+        if (headerKey === CONFIG.STATUS_HEADER) {
+          return text === "status";
+        }
         return false;
       });
     },
@@ -248,24 +253,43 @@
       const headerRow = table.querySelector("thead tr");
       if (!headerRow) return;
 
-      if (!headerRow.querySelector("[data-sla-header]")) {
-        const th = document.createElement("th");
-        th.className = "py-2 px-1 whitespace-nowrap";
-        th.setAttribute("data-sla-header", "true");
-        th.innerHTML = '<div class="flex gap-2 items-center">SLA</div>';
-        headerRow.appendChild(th);
+      let durationTh = headerRow.querySelector("[data-duration-header]");
+      if (!durationTh) {
+        durationTh = document.createElement("th");
+        durationTh.className = "py-2 px-1 whitespace-nowrap";
+        durationTh.setAttribute("data-duration-header", "true");
+        durationTh.innerHTML = '<div class="flex gap-2 items-center">Duration</div>';
       }
 
-      if (!headerRow.querySelector("[data-duration-header]")) {
-        const th = document.createElement("th");
-        th.className = "py-2 px-1 whitespace-nowrap";
-        th.setAttribute("data-duration-header", "true");
-        th.innerHTML = '<div class="flex gap-2 items-center">Duration</div>';
-        headerRow.appendChild(th);
+      let slaTh = headerRow.querySelector("[data-sla-header]");
+      if (!slaTh) {
+        slaTh = document.createElement("th");
+        slaTh.className = "py-2 px-1 whitespace-nowrap";
+        slaTh.setAttribute("data-sla-header", "true");
+        slaTh.innerHTML = '<div class="flex gap-2 items-center">SLA</div>';
+      }
+
+      const headerCells = Array.from(headerRow.children);
+      const statusTh = headerCells.find((th) => th.textContent.toLowerCase().trim() === "status");
+
+      if (statusTh) {
+        const nextSibling = statusTh.nextSibling;
+        if (nextSibling) {
+          if (durationTh.parentElement !== headerRow || durationTh.nextSibling !== slaTh) {
+            headerRow.insertBefore(durationTh, nextSibling);
+            headerRow.insertBefore(slaTh, nextSibling);
+          }
+        } else if (durationTh.parentElement !== headerRow) {
+          headerRow.appendChild(durationTh);
+          headerRow.appendChild(slaTh);
+        }
+      } else if (durationTh.parentElement !== headerRow) {
+        headerRow.appendChild(durationTh);
+        headerRow.appendChild(slaTh);
       }
     },
 
-    renderRow(row, caseIdIdx, startIdx, endIdx, districtIdx) {
+    renderRow(row, caseIdIdx, startIdx, endIdx, districtIdx, statusIdx) {
       const cells = row.querySelectorAll("td");
       if (cells.length <= Math.max(caseIdIdx, startIdx, endIdx)) return;
 
@@ -278,27 +302,40 @@
       let autoZone = "1";
       if (districtIdx !== -1 && cells.length > districtIdx) {
         const districtText = cells[districtIdx].textContent.trim().toLowerCase();
-        if (districtText.includes("hawassa") || districtText.includes("wolaita")) {
+        if (districtText.includes("hawassa") || districtText.includes("wolaita") || districtText.includes("wolayta")) {
           autoZone = "2";
         } else if (districtText.includes("shashemene")) {
           autoZone = "3";
         }
       }
 
-      let slaCell = row.querySelector("[data-sla-cell]");
-      if (!slaCell) {
-        slaCell = document.createElement("td");
-        slaCell.className = "py-2 px-1 whitespace-nowrap";
-        slaCell.setAttribute("data-sla-cell", "true");
-        row.appendChild(slaCell);
-      }
-
       let durationCell = row.querySelector("[data-duration-cell]");
+      const isNewDuration = !durationCell;
       if (!durationCell) {
         durationCell = document.createElement("td");
         durationCell.className = "py-2 px-1 whitespace-nowrap";
         durationCell.setAttribute("data-duration-cell", "true");
-        row.appendChild(durationCell);
+      }
+
+      let slaCell = row.querySelector("[data-sla-cell]");
+      const isNewSLA = !slaCell;
+      if (!slaCell) {
+        slaCell = document.createElement("td");
+        slaCell.className = "py-2 px-1 whitespace-nowrap";
+        slaCell.setAttribute("data-sla-cell", "true");
+      }
+
+      if (isNewDuration || isNewSLA) {
+        const allCells = Array.from(row.children);
+        const statusCell = statusIdx !== undefined && statusIdx !== -1 && allCells.length > statusIdx ? allCells[statusIdx] : null;
+        if (statusCell) {
+          const nextSibling = statusCell.nextSibling;
+          row.insertBefore(durationCell, nextSibling);
+          row.insertBefore(slaCell, nextSibling);
+        } else {
+          row.appendChild(durationCell);
+          row.appendChild(slaCell);
+        }
       }
 
       const zone = StorageManager.getZone(caseId, autoZone);
@@ -411,11 +448,12 @@
       const startIdx = this.getColumnIndex(table, CONFIG.START_HEADER);
       const endIdx = this.getColumnIndex(table, CONFIG.END_HEADER);
       const districtIdx = this.getColumnIndex(table, CONFIG.DISTRICT_HEADER);
+      const statusIdx = this.getColumnIndex(table, CONFIG.STATUS_HEADER);
 
       if (caseIdIdx === -1 || startIdx === -1 || endIdx === -1) return;
 
       const rows = table.querySelectorAll("tbody tr");
-      rows.forEach((row) => this.renderRow(row, caseIdIdx, startIdx, endIdx, districtIdx));
+      rows.forEach((row) => this.renderRow(row, caseIdIdx, startIdx, endIdx, districtIdx, statusIdx));
     }
   };
 

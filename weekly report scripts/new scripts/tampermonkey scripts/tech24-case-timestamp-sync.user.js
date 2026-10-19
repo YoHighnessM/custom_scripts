@@ -4,6 +4,7 @@
 // @version      4.2
 // @description  Instant loading, dynamic logging, flexible date formatting, and open-case handling.
 // @match        https://tech24et.com/cases*
+// @match        https://dashboard.tech24et.com/cases*
 // @updateURL    https://raw.githubusercontent.com/YoHighnessM/custom_scripts/main/tech24-case-timestamp-sync.user.js
 // @downloadURL  https://raw.githubusercontent.com/YoHighnessM/custom_scripts/main/tech24-case-timestamp-sync.user.js
 // @grant        GM_xmlhttpRequest
