@@ -160,7 +160,7 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
   assert.strictEqual(endIdx, 9);
   assert.strictEqual(statusIdx, 10);
 
-  // Test header DOM manipulation positioning SLA and Duration before Status (Start, End, SLA, Duration, Status, Action)
+  // Test header DOM manipulation positioning Duration and SLA directly after Status
   const children = [
     { textContent: 'Case ID', nextSibling: null },
     { textContent: 'Start', nextSibling: null },
@@ -190,14 +190,12 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
   SLAScript.TableRenderer.ensureHeaders({ querySelector() { return mockHeaderRow; } });
 
   const textContents = children.map(c => c.textContent.replace(/<[^>]*>/g, '').trim());
-  const endPos = textContents.indexOf("End");
-  const slaPos = textContents.indexOf("SLA");
-  const durationPos = textContents.indexOf("Duration");
   const statusPos = textContents.indexOf("Status");
+  const durationPos = textContents.indexOf("Duration");
+  const slaPos = textContents.indexOf("SLA");
 
-  assert.strictEqual(slaPos, endPos + 1);
-  assert.strictEqual(durationPos, endPos + 2);
-  assert.strictEqual(statusPos, endPos + 3);
+  assert.strictEqual(durationPos, statusPos + 1);
+  assert.strictEqual(slaPos, statusPos + 2);
 
   console.log("  ✅ Header Matching passed!");
 }
