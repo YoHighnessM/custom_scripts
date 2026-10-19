@@ -26,7 +26,8 @@
     START_HEADER: "start",
     END_HEADER: "end",
     DISTRICT_HEADER: "district",
-    STATUS_HEADER: "status"
+    STATUS_HEADER: "status",
+    ACTION_HEADER: "action"
   });
 
   // Active timers for open-case live countdowns (caseId -> intervalId)
@@ -245,6 +246,9 @@
         if (headerKey === CONFIG.STATUS_HEADER) {
           return text === "status";
         }
+        if (headerKey === CONFIG.ACTION_HEADER) {
+          return text === "action" || text.includes("action");
+        }
         return false;
       });
     },
@@ -252,14 +256,6 @@
     ensureHeaders(table) {
       const headerRow = table.querySelector("thead tr");
       if (!headerRow) return;
-
-      let durationTh = headerRow.querySelector("[data-duration-header]");
-      if (!durationTh) {
-        durationTh = document.createElement("th");
-        durationTh.className = "py-2 px-1 whitespace-nowrap";
-        durationTh.setAttribute("data-duration-header", "true");
-        durationTh.innerHTML = '<div class="flex gap-2 items-center">Duration</div>';
-      }
 
       let slaTh = headerRow.querySelector("[data-sla-header]");
       if (!slaTh) {
@@ -269,27 +265,36 @@
         slaTh.innerHTML = '<div class="flex gap-2 items-center">SLA</div>';
       }
 
-      const headerCells = Array.from(headerRow.children);
-      const statusTh = headerCells.find((th) => th.textContent.toLowerCase().trim() === "status");
+      let durationTh = headerRow.querySelector("[data-duration-header]");
+      if (!durationTh) {
+        durationTh = document.createElement("th");
+        durationTh.className = "py-2 px-1 whitespace-nowrap";
+        durationTh.setAttribute("data-duration-header", "true");
+        durationTh.innerHTML = '<div class="flex gap-2 items-center">Duration</div>';
+      }
 
-      if (statusTh) {
-        const nextSibling = statusTh.nextSibling;
+      const headerCells = Array.from(headerRow.children);
+      const actionTh = headerCells.find((th) => th.textContent.toLowerCase().trim() === "action");
+      const targetAnchor = actionTh || headerCells.find((th) => th.textContent.toLowerCase().trim() === "status");
+
+      if (targetAnchor) {
+        const nextSibling = targetAnchor.nextSibling;
         if (nextSibling) {
-          if (durationTh.parentElement !== headerRow || durationTh.nextSibling !== slaTh) {
-            headerRow.insertBefore(durationTh, nextSibling);
+          if (slaTh.parentElement !== headerRow || slaTh.nextSibling !== durationTh) {
             headerRow.insertBefore(slaTh, nextSibling);
+            headerRow.insertBefore(durationTh, nextSibling);
           }
-        } else if (durationTh.parentElement !== headerRow) {
-          headerRow.appendChild(durationTh);
+        } else {
           headerRow.appendChild(slaTh);
+          headerRow.appendChild(durationTh);
         }
-      } else if (durationTh.parentElement !== headerRow) {
-        headerRow.appendChild(durationTh);
+      } else if (slaTh.parentElement !== headerRow) {
         headerRow.appendChild(slaTh);
+        headerRow.appendChild(durationTh);
       }
     },
 
-    renderRow(row, caseIdIdx, startIdx, endIdx, districtIdx, statusIdx) {
+    renderRow(row, caseIdIdx, startIdx, endIdx, districtIdx, statusIdx, actionIdx) {
       const cells = row.querySelectorAll("td");
       if (cells.length <= Math.max(caseIdIdx, startIdx, endIdx)) return;
 
@@ -309,14 +314,6 @@
         }
       }
 
-      let durationCell = row.querySelector("[data-duration-cell]");
-      const isNewDuration = !durationCell;
-      if (!durationCell) {
-        durationCell = document.createElement("td");
-        durationCell.className = "py-2 px-1 whitespace-nowrap";
-        durationCell.setAttribute("data-duration-cell", "true");
-      }
-
       let slaCell = row.querySelector("[data-sla-cell]");
       const isNewSLA = !slaCell;
       if (!slaCell) {
@@ -325,16 +322,35 @@
         slaCell.setAttribute("data-sla-cell", "true");
       }
 
-      if (isNewDuration || isNewSLA) {
+      let durationCell = row.querySelector("[data-duration-cell]");
+      const isNewDuration = !durationCell;
+      if (!durationCell) {
+        durationCell = document.createElement("td");
+        durationCell.className = "py-2 px-1 whitespace-nowrap";
+        durationCell.setAttribute("data-duration-cell", "true");
+      }
+
+      if (isNewSLA || isNewDuration) {
         const allCells = Array.from(row.children);
-        const statusCell = statusIdx !== undefined && statusIdx !== -1 && allCells.length > statusIdx ? allCells[statusIdx] : null;
-        if (statusCell) {
-          const nextSibling = statusCell.nextSibling;
-          row.insertBefore(durationCell, nextSibling);
-          row.insertBefore(slaCell, nextSibling);
+        let targetCell = null;
+        if (actionIdx !== undefined && actionIdx !== -1 && allCells.length > actionIdx) {
+          targetCell = allCells[actionIdx];
+        } else if (statusIdx !== undefined && statusIdx !== -1 && allCells.length > statusIdx) {
+          targetCell = allCells[statusIdx];
+        }
+
+        if (targetCell) {
+          const nextSibling = targetCell.nextSibling;
+          if (nextSibling) {
+            row.insertBefore(slaCell, nextSibling);
+            row.insertBefore(durationCell, nextSibling);
+          } else {
+            row.appendChild(slaCell);
+            row.appendChild(durationCell);
+          }
         } else {
-          row.appendChild(durationCell);
           row.appendChild(slaCell);
+          row.appendChild(durationCell);
         }
       }
 
@@ -449,11 +465,12 @@
       const endIdx = this.getColumnIndex(table, CONFIG.END_HEADER);
       const districtIdx = this.getColumnIndex(table, CONFIG.DISTRICT_HEADER);
       const statusIdx = this.getColumnIndex(table, CONFIG.STATUS_HEADER);
+      const actionIdx = this.getColumnIndex(table, CONFIG.ACTION_HEADER);
 
       if (caseIdIdx === -1 || startIdx === -1 || endIdx === -1) return;
 
       const rows = table.querySelectorAll("tbody tr");
-      rows.forEach((row) => this.renderRow(row, caseIdIdx, startIdx, endIdx, districtIdx, statusIdx));
+      rows.forEach((row) => this.renderRow(row, caseIdIdx, startIdx, endIdx, districtIdx, statusIdx, actionIdx));
     }
   };
 
