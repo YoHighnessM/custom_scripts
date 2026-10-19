@@ -253,14 +253,6 @@
       const headerRow = table.querySelector("thead tr");
       if (!headerRow) return;
 
-      let durationTh = headerRow.querySelector("[data-duration-header]");
-      if (!durationTh) {
-        durationTh = document.createElement("th");
-        durationTh.className = "py-2 px-1 whitespace-nowrap";
-        durationTh.setAttribute("data-duration-header", "true");
-        durationTh.innerHTML = '<div class="flex gap-2 items-center">Duration</div>';
-      }
-
       let slaTh = headerRow.querySelector("[data-sla-header]");
       if (!slaTh) {
         slaTh = document.createElement("th");
@@ -269,23 +261,31 @@
         slaTh.innerHTML = '<div class="flex gap-2 items-center">SLA</div>';
       }
 
+      let durationTh = headerRow.querySelector("[data-duration-header]");
+      if (!durationTh) {
+        durationTh = document.createElement("th");
+        durationTh.className = "py-2 px-1 whitespace-nowrap";
+        durationTh.setAttribute("data-duration-header", "true");
+        durationTh.innerHTML = '<div class="flex gap-2 items-center">Duration</div>';
+      }
+
       const headerCells = Array.from(headerRow.children);
       const statusTh = headerCells.find((th) => th.textContent.toLowerCase().trim() === "status");
 
       if (statusTh) {
-        const nextSibling = statusTh.nextSibling;
-        if (nextSibling) {
-          if (durationTh.parentElement !== headerRow || durationTh.nextSibling !== slaTh) {
-            headerRow.insertBefore(durationTh, nextSibling);
-            headerRow.insertBefore(slaTh, nextSibling);
-          }
-        } else if (durationTh.parentElement !== headerRow) {
-          headerRow.appendChild(durationTh);
-          headerRow.appendChild(slaTh);
+        if (slaTh.parentElement !== headerRow || slaTh.nextSibling !== durationTh || durationTh.nextSibling !== statusTh) {
+          headerRow.insertBefore(slaTh, statusTh);
+          headerRow.insertBefore(durationTh, statusTh);
         }
-      } else if (durationTh.parentElement !== headerRow) {
-        headerRow.appendChild(durationTh);
-        headerRow.appendChild(slaTh);
+      } else {
+        const endTh = headerCells.find((th) => th.textContent.toLowerCase().trim().includes("end"));
+        if (endTh && endTh.nextSibling) {
+          headerRow.insertBefore(slaTh, endTh.nextSibling);
+          headerRow.insertBefore(durationTh, endTh.nextSibling);
+        } else if (slaTh.parentElement !== headerRow) {
+          headerRow.appendChild(slaTh);
+          headerRow.appendChild(durationTh);
+        }
       }
     },
 
@@ -309,14 +309,6 @@
         }
       }
 
-      let durationCell = row.querySelector("[data-duration-cell]");
-      const isNewDuration = !durationCell;
-      if (!durationCell) {
-        durationCell = document.createElement("td");
-        durationCell.className = "py-2 px-1 whitespace-nowrap";
-        durationCell.setAttribute("data-duration-cell", "true");
-      }
-
       let slaCell = row.querySelector("[data-sla-cell]");
       const isNewSLA = !slaCell;
       if (!slaCell) {
@@ -325,16 +317,27 @@
         slaCell.setAttribute("data-sla-cell", "true");
       }
 
-      if (isNewDuration || isNewSLA) {
+      let durationCell = row.querySelector("[data-duration-cell]");
+      const isNewDuration = !durationCell;
+      if (!durationCell) {
+        durationCell = document.createElement("td");
+        durationCell.className = "py-2 px-1 whitespace-nowrap";
+        durationCell.setAttribute("data-duration-cell", "true");
+      }
+
+      if (isNewSLA || isNewDuration) {
         const allCells = Array.from(row.children);
         const statusCell = statusIdx !== undefined && statusIdx !== -1 && allCells.length > statusIdx ? allCells[statusIdx] : null;
         if (statusCell) {
-          const nextSibling = statusCell.nextSibling;
-          row.insertBefore(durationCell, nextSibling);
+          row.insertBefore(slaCell, statusCell);
+          row.insertBefore(durationCell, statusCell);
+        } else if (endIdx !== undefined && endIdx !== -1 && allCells.length > endIdx && allCells[endIdx].nextSibling) {
+          const nextSibling = allCells[endIdx].nextSibling;
           row.insertBefore(slaCell, nextSibling);
+          row.insertBefore(durationCell, nextSibling);
         } else {
-          row.appendChild(durationCell);
           row.appendChild(slaCell);
+          row.appendChild(durationCell);
         }
       }
 
