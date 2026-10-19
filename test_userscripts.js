@@ -11,11 +11,20 @@ function createBrowserContext() {
     head: { appendChild() {} },
     body: { appendChild() {} },
     createElement() {
+      let innerHTML = "";
+      let textContent = "";
       return {
         style: {},
         setAttribute() {},
         appendChild() {},
-        dispatchEvent() {}
+        dispatchEvent() {},
+        get innerHTML() { return innerHTML; },
+        set innerHTML(val) {
+          innerHTML = val;
+          textContent = val.replace(/<[^>]*>/g, "");
+        },
+        get textContent() { return textContent; },
+        set textContent(val) { textContent = val; }
       };
     },
     getElementById() { return null; },
@@ -114,7 +123,7 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
   console.log("  ✅ SLA Duration BusinessCalendar passed!");
 }
 
-// --- Test 4: Header Column Matching ---
+// --- Test 4: Header Column Matching & Insertion Order ---
 {
   console.log("Testing Header Matching...");
   const mockTable = {
@@ -122,10 +131,17 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
       if (selector === "thead th") {
         return [
           { textContent: '<th class="py-2 px-1 whitespace-nowrap"><div class="flex gap-2 items-center">Case ID</div></th>' },
-          { textContent: 'Status' },
+          { textContent: 'Bank' },
+          { textContent: 'District' },
+          { textContent: 'Branch' },
+          { textContent: 'Case Type' },
+          { textContent: 'ATM Name' },
+          { textContent: 'SLA Status' },
+          { textContent: 'Technician' },
           { textContent: '<th class="py-2 px-1 whitespace-nowrap"><div class="flex gap-2 items-center">Start</div></th>' },
           { textContent: '<th class="py-2 px-1 whitespace-nowrap"><div class="flex gap-2 items-center">End</div></th>' },
-          { textContent: 'District' }
+          { textContent: 'Status' },
+          { textContent: 'Action' }
         ];
       }
       return [];
@@ -133,14 +149,49 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
   };
 
   const caseIdx = SLAScript.TableRenderer.getColumnIndex(mockTable, "case id");
+  const districtIdx = SLAScript.TableRenderer.getColumnIndex(mockTable, "district");
   const startIdx = SLAScript.TableRenderer.getColumnIndex(mockTable, "start");
   const endIdx = SLAScript.TableRenderer.getColumnIndex(mockTable, "end");
-  const districtIdx = SLAScript.TableRenderer.getColumnIndex(mockTable, "district");
+  const statusIdx = SLAScript.TableRenderer.getColumnIndex(mockTable, "status");
 
   assert.strictEqual(caseIdx, 0);
-  assert.strictEqual(startIdx, 2);
-  assert.strictEqual(endIdx, 3);
-  assert.strictEqual(districtIdx, 4);
+  assert.strictEqual(districtIdx, 2);
+  assert.strictEqual(startIdx, 8);
+  assert.strictEqual(endIdx, 9);
+  assert.strictEqual(statusIdx, 10);
+
+  // Test header DOM manipulation positioning Duration and SLA after Status
+  const children = [
+    { textContent: 'Case ID', nextSibling: null },
+    { textContent: 'Status', nextSibling: null },
+    { textContent: 'Action', nextSibling: null }
+  ];
+  children[0].nextSibling = children[1];
+  children[1].nextSibling = children[2];
+
+  const mockHeaderRow = {
+    children: children,
+    querySelector() { return null; },
+    insertBefore(newEl, refEl) {
+      const refIdx = children.indexOf(refEl);
+      if (refIdx !== -1) {
+        children.splice(refIdx, 0, newEl);
+      } else {
+        children.push(newEl);
+      }
+    },
+    appendChild(newEl) { children.push(newEl); }
+  };
+
+  SLAScript.TableRenderer.ensureHeaders({ querySelector() { return mockHeaderRow; } });
+
+  const textContents = children.map(c => c.textContent.replace(/<[^>]*>/g, '').trim());
+  const statusPos = textContents.indexOf("Status");
+  const durationPos = textContents.indexOf("Duration");
+  const slaPos = textContents.indexOf("SLA");
+
+  assert.strictEqual(durationPos, statusPos + 1);
+  assert.strictEqual(slaPos, statusPos + 2);
 
   console.log("  ✅ Header Matching passed!");
 }
