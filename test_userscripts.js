@@ -78,7 +78,53 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
   assert.strictEqual(openCaseResult.date, null);
   assert.strictEqual(openCaseResult.time, null);
 
+  // Test ISO timestamp parsing (from API assigned_at or created_at)
+  const isoResult = SyncScript.DateParser.splitTimestamp("2026-10-29T11:56:04.000000Z");
+  assert.ok(isoResult.date);
+  assert.ok(isoResult.time);
+
   console.log("  ✅ Timestamp Sync DateParser passed!");
+}
+
+// --- Test 1b: ApiExtractor extractCaseFields in Timestamp Sync ---
+{
+  console.log("Testing Timestamp Sync - ApiExtractor.extractCaseFields...");
+  const mockApiResponse = {
+    data: [
+      {
+        callentry_id: 19311,
+        assigned_at: "2026-10-29T11:56:04.000000Z",
+        completed_at: "2026-10-29 05:29 PM",
+        created_at: "2026-10-29 02:55 PM",
+        updated_at: "2026-10-29 06:10 PM",
+        repeated_callentries_dates: [
+          "2026-10-08 03:02 PM",
+          "2026-10-29 02:55 PM"
+        ]
+      },
+      {
+        callentry_id: 19312,
+        assigned_at: "2026-10-30T09:00:00.000000Z",
+        completed_at: null,
+        created_at: "2026-10-30 08:45 AM",
+        updated_at: "2026-10-30 08:45 AM"
+      }
+    ]
+  };
+
+  const case1 = SyncScript.ApiExtractor.extractCaseFields(mockApiResponse, "19311");
+  assert.strictEqual(case1.found, true);
+  assert.strictEqual(case1.caseId, "19311");
+  assert.strictEqual(case1.createdAt, "2026-10-29 02:55 PM");
+  assert.strictEqual(case1.completedAt, "2026-10-29 05:29 PM");
+  assert.strictEqual(case1.assignedAt, "2026-10-29T11:56:04.000000Z");
+
+  const caseNotFound = SyncScript.ApiExtractor.extractCaseFields(mockApiResponse, "99999");
+  assert.strictEqual(caseNotFound.found, false);
+  assert.strictEqual(caseNotFound.caseId, "99999");
+  assert.strictEqual(caseNotFound.error, "Case not found");
+
+  console.log("  ✅ Timestamp Sync ApiExtractor.extractCaseFields passed!");
 }
 
 // --- Test 2: SLA & Duration - Date Parsing ---

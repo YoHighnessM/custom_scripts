@@ -1,15 +1,17 @@
 // ==UserScript==
 // @name         Tech24 Case Timestamp Sync (Ultra-Fast Edition)
 // @namespace    tech24-case-sla-sync
-// @version      4.2
-// @description  Instant loading, dynamic logging, flexible date formatting, and open-case handling.
+// @version      5.0
+// @description  Direct API extraction, dynamic logging, flexible date formatting, and open-case handling.
 // @match        https://tech24et.com/cases*
 // @match        https://dashboard.tech24et.com/cases*
+// @match        https://dashboard.tech24et.com/*
 // @updateURL    https://raw.githubusercontent.com/YoHighnessM/custom_scripts/main/tech24-case-timestamp-sync.user.js
 // @downloadURL  https://raw.githubusercontent.com/YoHighnessM/custom_scripts/main/tech24-case-timestamp-sync.user.js
 // @grant        GM_xmlhttpRequest
 // @connect      script.google.com
 // @connect      script.googleusercontent.com
+// @connect      api.dashboard.tech24et.com
 // @connect      *
 // ==/UserScript==
 
@@ -21,10 +23,12 @@
   // =========================================================================
   const CONFIG = Object.freeze({
     BRIDGE_URL: "https://script.google.com/macros/s/AKfycbywn6bKxqdObHkgB4x7AgqyLLSCBYH2Mk5rSUfL_MndKiPfgeF8BRPd8o-TCGGOIbhI-g/exec",
+    API_BASE_URL: "https://api.dashboard.tech24et.com/api/callentries",
     SEARCH_SELECTOR: 'input[placeholder="Search Cases..."]',
     FILTER_WAIT_TIMEOUT_MS: 12000,
     FILTER_POLL_MS: 50,
     CHECK_INTERVAL_MS: 2000,
+    API_RATE_LIMIT_DELAY_MS: 500,
     MAX_RETRIES: 3,
     RETRY_DELAY_MS: 1500,
     WEEKDAY_NAMES: Object.freeze(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
@@ -159,29 +163,41 @@
   const DateParser = {
     formatDateForSheet(rawDate) {
       if (!rawDate) return "";
-      const clean = rawDate.replace(/[()]/g, "").trim();
+      const clean = String(rawDate).replace(/[()]/g, "").trim();
       if (!clean) return "";
 
       let yyyy, mm, dd;
 
-      // 1. Check YYYY-MM-DD or YYYY/MM/DD
-      let match = clean.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
-      if (match) {
-        [, yyyy, mm, dd] = match;
-      } else {
-        // 2. Check MM-DD-YYYY or MM/DD/YYYY
-        match = clean.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+      // 1. Check ISO format with T (e.g. 2026-10-29T11:56:04.000000Z)
+      if (clean.includes("T")) {
+        const parsed = new Date(clean);
+        if (!isNaN(parsed.getTime())) {
+          yyyy = String(parsed.getFullYear());
+          mm = String(parsed.getMonth() + 1);
+          dd = String(parsed.getDate());
+        }
+      }
+
+      if (!yyyy) {
+        // 2. Check YYYY-MM-DD or YYYY/MM/DD
+        let match = clean.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
         if (match) {
-          [, mm, dd, yyyy] = match;
+          [, yyyy, mm, dd] = match;
         } else {
-          // 3. Fallback: Native Date Object parsing
-          const parsed = new Date(clean);
-          if (!isNaN(parsed.getTime())) {
-            yyyy = String(parsed.getFullYear());
-            mm = String(parsed.getMonth() + 1);
-            dd = String(parsed.getDate());
+          // 3. Check MM-DD-YYYY or MM/DD/YYYY
+          match = clean.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+          if (match) {
+            [, mm, dd, yyyy] = match;
           } else {
-            return clean;
+            // 4. Fallback: Native Date Object parsing
+            const parsed = new Date(clean);
+            if (!isNaN(parsed.getTime())) {
+              yyyy = String(parsed.getFullYear());
+              mm = String(parsed.getMonth() + 1);
+              dd = String(parsed.getDate());
+            } else {
+              return clean;
+            }
           }
         }
       }
@@ -195,14 +211,36 @@
       return `${dayName} ${formattedMM}-${formattedDD}-${formattedYY}`;
     },
 
+    formatTimeFromDate(dateObj) {
+      if (!dateObj || isNaN(dateObj.getTime())) return null;
+      let hours = dateObj.getHours();
+      const minutes = String(dateObj.getMinutes()).padStart(2, "0");
+      const ampm = hours >= 12 ? "PM" : "AM";
+      hours = hours % 12;
+      if (hours === 0) hours = 12;
+      const formattedHours = String(hours).padStart(2, "0");
+      return `${formattedHours}:${minutes} ${ampm}`;
+    },
+
     splitTimestamp(text) {
       if (!text) return { date: null, time: null };
-      const clean = text.replace(/[()]/g, "").replace(/^\(\vert{}\)$/g, "").trim();
+      const clean = String(text).replace(/[()]/g, "").replace(/^\(\vert{}\)$/g, "").trim();
       const lower = clean.toLowerCase();
 
       // Ignore empty/placeholder values for open or unclosed cases
       if (!clean || clean === "-" || lower.includes("pending") || lower.includes("open") || lower.includes("n/a")) {
         return { date: null, time: null };
+      }
+
+      // Check if text is ISO timestamp format (e.g. 2026-10-29T11:56:04.000000Z)
+      if (clean.includes("T")) {
+        const d = new Date(clean);
+        if (!isNaN(d.getTime())) {
+          return {
+            date: this.formatDateForSheet(clean),
+            time: this.formatTimeFromDate(d)
+          };
+        }
       }
 
       const parts = clean.split(/\s+/);
@@ -211,6 +249,134 @@
       const dateStr = this.formatDateForSheet(parts[0]);
       const timeStr = parts.slice(1).join(" ");
       return { date: dateStr, time: timeStr };
+    }
+  };
+
+  // =========================================================================
+  // 5. API Extraction Service
+  // =========================================================================
+  const ApiExtractor = {
+    extractCaseFields(result, requestedCaseId) {
+      if (!result || !Array.isArray(result.data)) {
+        throw new Error("Unexpected API response: data array missing");
+      }
+
+      const requestedId = String(requestedCaseId).trim();
+
+      const record = result.data.find(
+        (item) => String(item.callentry_id).trim() === requestedId
+      );
+
+      if (!record) {
+        return {
+          caseId: requestedId,
+          found: false,
+          assignedAt: "",
+          completedAt: "",
+          createdAt: "",
+          updatedAt: "",
+          repeatedDates: [],
+          error: "Case not found"
+        };
+      }
+
+      return {
+        caseId: String(record.callentry_id).trim(),
+        found: true,
+        assignedAt: record.assigned_at ?? "",
+        completedAt: record.completed_at ?? "",
+        createdAt: record.created_at ?? "",
+        updatedAt: record.updated_at ?? "",
+        repeatedDates: Array.isArray(record.repeated_callentries_dates)
+          ? record.repeated_callentries_dates
+          : [],
+        error: ""
+      };
+    },
+
+    async fetchCaseFromApi(caseId) {
+      const params = new URLSearchParams({
+        limit: "20",
+        search: String(caseId).trim(),
+        callstatus: "",
+        approvalstatus: "",
+        start_date: "",
+        end_date: "",
+        active: "",
+        bank: "",
+        branch: "",
+        district: ""
+      });
+
+      const url = `${CONFIG.API_BASE_URL}?${params.toString()}`;
+
+      // 1. First attempt: normal fetch with credentials
+      try {
+        if (typeof fetch === "function") {
+          const response = await fetch(url, {
+            method: "GET",
+            credentials: "include",
+            headers: {
+              Accept: "application/json"
+            }
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            return this.extractCaseFields(result, caseId);
+          } else if (response.status === 401 || response.status === 403) {
+            throw new Error(`Authentication required (HTTP ${response.status}). Please log in to Tech24.`);
+          } else if (response.status === 429) {
+            throw new Error(`Rate limit hit (HTTP 429).`);
+          }
+        }
+      } catch (err) {
+        // If it was an auth error, re-throw immediately
+        if (err.message && err.message.includes("Authentication required")) {
+          throw err;
+        }
+        // Otherwise fallback to GM_xmlhttpRequest
+      }
+
+      // 2. Fallback: GM_xmlhttpRequest
+      return await this.fetchCaseFromApiGM(url, caseId);
+    },
+
+    fetchCaseFromApiGM(url, caseId) {
+      return new Promise((resolve, reject) => {
+        if (typeof GM_xmlhttpRequest !== "function") {
+          return reject(new Error("GM_xmlhttpRequest not available."));
+        }
+
+        GM_xmlhttpRequest({
+          method: "GET",
+          url: url,
+          headers: {
+            Accept: "application/json"
+          },
+          timeout: 20000,
+          onload: (response) => {
+            if (response.status === 401 || response.status === 403) {
+              return reject(new Error(`Authentication required (HTTP ${response.status}). Please log in.`));
+            }
+            if (response.status === 429) {
+              return reject(new Error(`Rate limit hit (HTTP 429).`));
+            }
+            if (response.status < 200 || response.status >= 300) {
+              return reject(new Error(`API returned HTTP ${response.status}`));
+            }
+
+            try {
+              const data = JSON.parse(response.responseText);
+              resolve(this.extractCaseFields(data, caseId));
+            } catch (err) {
+              reject(new Error("API response was not valid JSON"));
+            }
+          },
+          onerror: () => reject(new Error("Network request to API failed")),
+          ontimeout: () => reject(new Error("API request timed out"))
+        });
+      });
     }
   };
 
@@ -307,25 +473,35 @@
         return;
       }
 
-      console.log(`[Tech24 Sync] 🚀 Starting sync process... ${rows.length} rows ready to be filled.`);
+      console.log(`[Tech24 Sync] 🚀 Starting API sync process... ${rows.length} rows ready to be filled.`);
 
       for (let i = 0; i < rows.length; i++) {
         const pending = rows[i];
-        const input = DashboardDOM.getSearchInput();
-        if (!input) throw new Error("Search bar not found on dashboard.");
-
-        DashboardDOM.setSearchValue(input, pending.caseId);
         SyncUI.update(`Processing Case ${pending.caseId} (${i + 1}/${rows.length})...`, "running");
 
-        const row = await DashboardDOM.waitForFilteredRow(pending.caseId);
+        let caseData = null;
+        for (let attempt = 1; attempt <= CONFIG.MAX_RETRIES; attempt++) {
+          try {
+            caseData = await ApiExtractor.fetchCaseFromApi(pending.caseId);
+            break;
+          } catch (apiErr) {
+            console.warn(`[Tech24 Sync] ⚠️ API attempt ${attempt}/${CONFIG.MAX_RETRIES} for case ${pending.caseId}: ${apiErr.message}`);
+            if (apiErr.message && apiErr.message.includes("Authentication required")) {
+              throw apiErr; // Don't retry auth errors, prompt user to log in
+            }
+            if (attempt < CONFIG.MAX_RETRIES) {
+              await delay(CONFIG.RETRY_DELAY_MS * attempt);
+            }
+          }
+        }
 
-        if (row) {
-          const cols = DashboardDOM.getColumnIndices();
-          const cells = row.querySelectorAll("td");
-          const reg = DateParser.splitTimestamp(cells[cols.start]?.textContent.trim());
-          const closed = DateParser.splitTimestamp(cells[cols.end]?.textContent.trim());
+        if (caseData && caseData.found) {
+          // Parse start timestamp: prefer created_at, fallback to assigned_at
+          const rawStart = caseData.createdAt || caseData.assignedAt;
+          const reg = DateParser.splitTimestamp(rawStart);
+          const closed = DateParser.splitTimestamp(caseData.completedAt);
 
-          const hasDataToInsert = (reg.date || closed.date);
+          const hasDataToInsert = Boolean(reg.date || closed.date);
           if (!hasDataToInsert) {
             stats.leftBlank++;
           } else {
@@ -334,32 +510,38 @@
 
           const params = new URLSearchParams({
             row: String(pending.row),
+            caseId: String(pending.caseId),
             regDate: reg.date || "",
             regTime: reg.time || "",
             closedDate: closed.date || "",
             closedTime: closed.time || ""
           });
 
-          let success = false;
+          let submitSuccess = false;
           for (let attempt = 1; attempt <= CONFIG.MAX_RETRIES; attempt++) {
             try {
               await NetworkBridge.get("submitResult", params.toString());
-              console.log(`[Tech24 Sync] ✅ Updated case ${pending.caseId} (Start: ${reg.date || 'None'}, Closed: ${closed.date || 'Open'})`);
-              success = true;
+              console.log(`[Tech24 Sync] ✅ Updated case ${pending.caseId} (Start: ${reg.date || 'None'} ${reg.time || ''}, Closed: ${closed.date || 'Open'} ${closed.time || ''})`);
+              submitSuccess = true;
               break;
             } catch (submitErr) {
-              console.warn(`[Tech24 Sync] ⚠️ Retry on case ${pending.caseId} (Attempt ${attempt}/${CONFIG.MAX_RETRIES}): ${submitErr.message}`);
+              console.warn(`[Tech24 Sync] ⚠️ Retry on submitting case ${pending.caseId} (Attempt ${attempt}/${CONFIG.MAX_RETRIES}): ${submitErr.message}`);
               if (attempt < CONFIG.MAX_RETRIES) await delay(CONFIG.RETRY_DELAY_MS);
             }
           }
 
-          if (!success) {
+          if (!submitSuccess) {
             console.error(`[Tech24 Sync] ❌ Failed to update case ${pending.caseId} after ${CONFIG.MAX_RETRIES} attempts.`);
           }
 
         } else {
           stats.skipped++;
-          console.log(`[Tech24 Sync] ⏭️ Case not found on dashboard after 12s, skipped: ${pending.caseId}`);
+          console.log(`[Tech24 Sync] ⏭️ Case not found or error for ${pending.caseId}: ${caseData ? caseData.error : 'No response'}`);
+        }
+
+        // Pacing delay between API requests to respect rate limits
+        if (CONFIG.API_RATE_LIMIT_DELAY_MS > 0 && i < rows.length - 1) {
+          await delay(CONFIG.API_RATE_LIMIT_DELAY_MS);
         }
       }
 
@@ -413,10 +595,11 @@
     checkAndRunSync(false);
   }, 1000);
 
-  // Expose parser/dom helpers for debugging or internal extensions
+  // Expose parser/dom/api helpers for debugging or internal extensions
   window.Tech24TimestampSync = {
     DateParser,
     DashboardDOM,
+    ApiExtractor,
     SyncUI,
     checkAndRunSync
   };
