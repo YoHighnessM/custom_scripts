@@ -716,6 +716,7 @@ function doGet(e) {
       case "submitResult":
         const result = TimestampSyncRepository.writeSingleResult({
           row: params.row,
+          caseId: params.caseId || "",
           regDate: params.regDate || "",
           regTime: params.regTime || "",
           closedDate: params.closedDate || "",
@@ -819,14 +820,57 @@ const TimestampSyncRepository = {
   },
 
   writeSingleResult(payload) {
-    const row = Number(payload.row);
-    if (!row || isNaN(row)) {
-      throw new Error("Invalid or missing row parameter.");
+    let targetRow = Number(payload.row);
+    const sheet = this.getSheet();
+
+    // If caseId is provided, verify or locate row by case ID
+    if (payload.caseId) {
+      const requestedCaseId = String(payload.caseId).trim();
+      const lastRow = sheet.getLastRow();
+
+      let rowMatches = false;
+      if (
+        targetRow &&
+        !isNaN(targetRow) &&
+        targetRow > TIMESTAMP_SYNC_CONFIG.HEADER_ROW &&
+        targetRow <= lastRow
+      ) {
+        const cellCaseId = String(
+          sheet
+            .getRange(targetRow, TIMESTAMP_SYNC_CONFIG.COLUMNS.CASE_ID)
+            .getValue()
+        ).trim();
+        if (cellCaseId === requestedCaseId) {
+          rowMatches = true;
+        }
+      }
+
+      if (!rowMatches && lastRow > TIMESTAMP_SYNC_CONFIG.HEADER_ROW) {
+        const numRows = lastRow - TIMESTAMP_SYNC_CONFIG.HEADER_ROW;
+        const caseIdColumnValues = sheet
+          .getRange(
+            TIMESTAMP_SYNC_CONFIG.HEADER_ROW + 1,
+            TIMESTAMP_SYNC_CONFIG.COLUMNS.CASE_ID,
+            numRows,
+            1
+          )
+          .getValues();
+        for (let idx = 0; idx < caseIdColumnValues.length; idx++) {
+          if (String(caseIdColumnValues[idx][0]).trim() === requestedCaseId) {
+            targetRow = TIMESTAMP_SYNC_CONFIG.HEADER_ROW + 1 + idx;
+            rowMatches = true;
+            break;
+          }
+        }
+      }
     }
 
-    const sheet = this.getSheet();
+    if (!targetRow || isNaN(targetRow) || targetRow <= TIMESTAMP_SYNC_CONFIG.HEADER_ROW) {
+      throw new Error("Invalid or missing row parameter, and caseId could not be matched.");
+    }
+
     const startCol = TIMESTAMP_SYNC_CONFIG.COLUMNS.REG_DATE;
-    const range = sheet.getRange(row, startCol, 1, 4);
+    const range = sheet.getRange(targetRow, startCol, 1, 4);
     const currentValues = range.getValues()[0];
 
     let modified = false;
@@ -852,10 +896,10 @@ const TimestampSyncRepository = {
     if (modified) {
       range.setValues([currentValues]);
       // Trigger duration calculation on row write
-      updateDurationForRow(sheet, row);
+      updateDurationForRow(sheet, targetRow);
     }
 
-    return { row, modified };
+    return { row: targetRow, modified };
   },
 };
 
