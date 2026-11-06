@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tech24 Case Timestamp Sync (Ultra-Fast Edition)
 // @namespace    tech24-case-sla-sync
-// @version      5.1
+// @version      5.0
 // @description  Direct API extraction, dynamic logging, flexible date formatting, open-case handling, and Technicians Activity Tracker.
 // @match        https://tech24et.com/cases*
 // @match        https://dashboard.tech24et.com/cases*
@@ -799,22 +799,22 @@
       const headerRow = document.querySelector("table thead tr");
       if (!headerRow) return;
 
-      // Check if icon is already placed
-      if (document.getElementById("tech24-info-icon-wrapper")) {
-        const wrapper = document.getElementById("tech24-info-icon-wrapper");
-        const slaTh = headerRow.querySelector("[data-sla-header]");
-        if (slaTh && wrapper.nextSibling !== slaTh) {
-          headerRow.insertBefore(wrapper, slaTh);
-        }
-        return;
+      // Find the SLA header element either by attribute or text content
+      let slaTh = headerRow.querySelector("[data-sla-header]");
+      if (!slaTh) {
+        const headerCells = Array.from(headerRow.children);
+        slaTh = headerCells.find((th) => {
+          const txt = (th.textContent || "").trim();
+          return txt === "SLA" || (txt.startsWith("SLA") && !txt.includes("Status"));
+        });
       }
+      if (!slaTh) return;
 
-      const wrapper = document.createElement("th");
-      wrapper.id = "tech24-info-icon-wrapper";
-      wrapper.className = "py-2 px-1 whitespace-nowrap";
-      wrapper.style.cssText = "width: 32px; text-align: center; padding: 4px 6px;";
+      // Check if button is already injected
+      if (slaTh.querySelector("#tech24-info-icon-btn")) return;
 
       const btn = document.createElement("button");
+      btn.id = "tech24-info-icon-btn";
       btn.type = "button";
       btn.className = "tech24-info-icon-btn";
       btn.title = "View Technicians Activity Summary by District";
@@ -832,21 +832,12 @@
         this.openModal();
       });
 
-      wrapper.appendChild(btn);
-
-      // Place just before the SLA table header
-      const slaTh = headerRow.querySelector("[data-sla-header]");
-      if (slaTh) {
-        headerRow.insertBefore(wrapper, slaTh);
+      // Insert inside the SLA header element before the SLA label text
+      const flexContainer = slaTh.querySelector("div.flex") || slaTh.querySelector("div") || slaTh;
+      if (flexContainer.firstChild) {
+        flexContainer.insertBefore(btn, flexContainer.firstChild);
       } else {
-        // If SLA header hasn't loaded yet, try after Action or Status, or at end
-        const headerCells = Array.from(headerRow.children);
-        const actionTh = headerCells.find((th) => th.textContent.toLowerCase().trim() === "action");
-        if (actionTh && actionTh.nextSibling) {
-          headerRow.insertBefore(wrapper, actionTh.nextSibling);
-        } else {
-          headerRow.appendChild(wrapper);
-        }
+        flexContainer.appendChild(btn);
       }
     },
 
