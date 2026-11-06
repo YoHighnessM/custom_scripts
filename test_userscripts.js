@@ -13,11 +13,20 @@ function createBrowserContext() {
     createElement() {
       let innerHTML = "";
       let textContent = "";
+      const listeners = {};
       return {
         style: {},
         setAttribute() {},
         appendChild() {},
-        dispatchEvent() {},
+        dispatchEvent(e) {
+          if (listeners[e.type]) listeners[e.type].forEach(cb => cb(e));
+        },
+        addEventListener(type, cb) {
+          if (!listeners[type]) listeners[type] = [];
+          listeners[type].push(cb);
+        },
+        querySelector() { return null; },
+        querySelectorAll() { return []; },
         get innerHTML() { return innerHTML; },
         set innerHTML(val) {
           innerHTML = val;
@@ -345,6 +354,97 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
   assert.strictEqual(backupFileName, "Activity Tracker | September 26 to October 02, 2026");
 
   console.log("  ✅ Archive & Reset Period String Formatting passed!");
+}
+
+// --- Test 7: Technicians Activity Summary Parser and Modal Rendering ---
+{
+  console.log("Testing Technicians Activity Summary Tracker...");
+  assert.ok(SyncScript.ActivityTracker, "SyncScript.ActivityTracker should exist");
+
+  // Test 7a: CSV Parser
+  const sampleCsv = `
+"District Tracker","Technicians Activity Summary"
+"Central Addis","","","","",""
+"Engineers","Physical Address","Phone Support","Total Case","PM","Total Activity"
+"Abebe B.","10","2","12","5","17"
+"Kebede T.","8","4","12","3","15"
+"Total","18","6","24","8","32"
+"","","","","",""
+"Wolayta","","","","",""
+"Engineers","Physical Address","Phone Support","Total Case","PM","Total Activity"
+"Mulugeta D.","7","1","8","4","12"
+  `.trim();
+
+  const parsedTables = SyncScript.ActivityTracker.parseCsvData(sampleCsv);
+  assert.strictEqual(parsedTables["Central Addis"].length, 2);
+  assert.strictEqual(parsedTables["Central Addis"][0].engineer, "Abebe B.");
+  assert.strictEqual(parsedTables["Central Addis"][0].physicalAddress, "10");
+  assert.strictEqual(parsedTables["Central Addis"][0].phoneSupport, "2");
+  assert.strictEqual(parsedTables["Central Addis"][0].totalCase, "12");
+  assert.strictEqual(parsedTables["Central Addis"][0].pm, "5");
+  assert.strictEqual(parsedTables["Central Addis"][0].totalActivity, "17");
+  assert.strictEqual(parsedTables["Central Addis"][0].totalCaseDisplay, "12 (10 | 2)");
+
+  assert.strictEqual(parsedTables["Wolayta"].length, 1);
+  assert.strictEqual(parsedTables["Wolayta"][0].engineer, "Mulugeta D.");
+  assert.strictEqual(parsedTables["Hawassa"].length, 0);
+
+  // Test 7b: Info Icon DOM Placement (Just before SLA header)
+  const slaTh = {
+    getAttribute(name) { return name === "data-sla-header" ? "true" : null; },
+    textContent: "SLA",
+    nextSibling: null
+  };
+  const durationTh = {
+    getAttribute(name) { return name === "data-duration-header" ? "true" : null; },
+    textContent: "Duration",
+    nextSibling: null
+  };
+  slaTh.nextSibling = durationTh;
+
+  const children = [
+    { textContent: "Case ID", getAttribute() { return null; } },
+    { textContent: "District", getAttribute() { return null; } },
+    { textContent: "Action", getAttribute() { return null; } },
+    slaTh,
+    durationTh
+  ];
+
+  const mockHeaderRow = {
+    children: children,
+    querySelector(sel) {
+      if (sel === "[data-sla-header]") return slaTh;
+      return null;
+    },
+    insertBefore(newEl, refEl) {
+      const idx = children.indexOf(refEl);
+      if (idx !== -1) {
+        children.splice(idx, 0, newEl);
+      } else {
+        children.push(newEl);
+      }
+    },
+    appendChild(newEl) {
+      children.push(newEl);
+    }
+  };
+
+  const origQuerySelector = global.document.querySelector;
+  global.document.querySelector = (sel) => {
+    if (sel === "table thead tr") return mockHeaderRow;
+    return null;
+  };
+
+  SyncScript.ActivityTracker.ensureInfoIcon();
+
+  // Find info icon wrapper in children
+  const iconIdx = children.findIndex(c => c.id === "tech24-info-icon-wrapper");
+  const slaIdx = children.indexOf(slaTh);
+  assert.ok(iconIdx !== -1, "Info icon wrapper must be inserted");
+  assert.strictEqual(iconIdx, slaIdx - 1, "Info icon wrapper must be positioned immediately before SLA header");
+
+  global.document.querySelector = origQuerySelector;
+  console.log("  ✅ Technicians Activity Summary Tracker passed!");
 }
 
 console.log("\n🎉 All unit tests passed successfully!");
