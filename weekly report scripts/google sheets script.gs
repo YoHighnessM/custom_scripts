@@ -690,6 +690,141 @@ function requestSync() {
   );
 }
 
+function getTechniciansActivitySummaryData() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  if (!spreadsheet) {
+    throw new Error("No active spreadsheet found.");
+  }
+  const sheet = spreadsheet.getSheetByName("Technicians Activity Summary by District") ||
+                spreadsheet.getSheetByName("Technicians Activity Summary");
+  if (!sheet) {
+    throw new Error("Sheet 'Technicians Activity Summary by District' not found.");
+  }
+
+  const tableNames = ["Central Addis", "Wolayta", "Hawassa", "Shashemene"];
+  const result = {};
+  tableNames.forEach((t) => { result[t] = []; });
+
+  // 1. Attempt to find tables via Google Sheets table metadata if available
+  try {
+    const fields = "sheets(properties(title),tables(name,range))";
+    let meta = null;
+    if (typeof Sheets !== "undefined" && Sheets.Spreadsheets) {
+      meta = Sheets.Spreadsheets.get(spreadsheet.getId(), { fields });
+    }
+    if (meta && meta.sheets) {
+      const sheetResource = meta.sheets.find(s => s.properties && s.properties.title === sheet.getName());
+      if (sheetResource && sheetResource.tables) {
+        sheetResource.tables.forEach(tbl => {
+          const matchedName = tableNames.find(t => t.toLowerCase() === (tbl.name || "").trim().toLowerCase());
+          if (matchedName && tbl.range) {
+            const startRow = (tbl.range.startRowIndex || 0) + 1;
+            const startCol = (tbl.range.startColumnIndex || 0) + 1;
+            const numRows = (tbl.range.endRowIndex || 0) - (tbl.range.startRowIndex || 0);
+            const numCols = (tbl.range.endColumnIndex || 0) - (tbl.range.startColumnIndex || 0);
+            if (numRows > 1 && numCols > 0) {
+              const values = sheet.getRange(startRow, startCol, numRows, numCols).getDisplayValues();
+              result[matchedName] = parseSummaryTableRows(values);
+            }
+          }
+        });
+      }
+    }
+  } catch (e) {
+    Logger.log("[getTechniciansActivitySummaryData Table API Error]: " + e.message);
+  }
+
+  // 2. Fallback: Parse grid directly by searching for section titles or headers
+  const anyTableFilled = Object.values(result).some(arr => arr.length > 0);
+  if (!anyTableFilled) {
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    if (lastRow >= 1 && lastCol >= 1) {
+      const allValues = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+      tableNames.forEach(tName => {
+        const parsedRows = extractTableByNameFromGrid(allValues, tName);
+        if (parsedRows.length > 0) {
+          result[tName] = parsedRows;
+        }
+      });
+    }
+  }
+
+  return result;
+}
+
+function parseSummaryTableRows(values) {
+  if (!values || values.length <= 1) return [];
+  const header = values[0].map(h => String(h || "").trim().toLowerCase());
+  const colIdx = {
+    engineer: header.findIndex(h => h.includes("engineer")),
+    physical: header.findIndex(h => h.includes("physical")),
+    phone: header.findIndex(h => h.includes("phone")),
+    totalCase: header.findIndex(h => h.includes("total case")),
+    pm: header.findIndex(h => h === "pm" || h.includes("pm")),
+    totalActivity: header.findIndex(h => h.includes("total activity"))
+  };
+
+  // Fallbacks if header labels vary slightly: default positions 0..5
+  if (colIdx.engineer === -1) colIdx.engineer = 0;
+  if (colIdx.physical === -1) colIdx.physical = 1;
+  if (colIdx.phone === -1) colIdx.phone = 2;
+  if (colIdx.totalCase === -1) colIdx.totalCase = 3;
+  if (colIdx.pm === -1) colIdx.pm = 4;
+  if (colIdx.totalActivity === -1) colIdx.totalActivity = 5;
+
+  const rows = [];
+  for (let r = 1; r < values.length; r++) {
+    const row = values[r];
+    const engineer = String(row[colIdx.engineer] || "").trim();
+    if (!engineer || engineer.toLowerCase() === "total" || engineer.toLowerCase() === "engineers") continue;
+
+    const physical = String(row[colIdx.physical] || "0").trim();
+    const phone = String(row[colIdx.phone] || "0").trim();
+    const totalCase = String(row[colIdx.totalCase] || "0").trim();
+    const pm = String(row[colIdx.pm] || "0").trim();
+    const totalActivity = String(row[colIdx.totalActivity] || "0").trim();
+
+    rows.push({
+      engineer,
+      physicalAddress: physical,
+      phoneSupport: phone,
+      totalCase,
+      pm,
+      totalActivity,
+      totalCaseDisplay: `${totalCase} (${physical} | ${phone})`
+    });
+  }
+  return rows;
+}
+
+function extractTableByNameFromGrid(grid, tableName) {
+  const normTarget = tableName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  for (let r = 0; r < grid.length; r++) {
+    for (let c = 0; c < grid[r].length; c++) {
+      const cell = String(grid[r][c] || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (cell === normTarget) {
+        // Look below for the header row containing 'Engineers'
+        for (let subR = r + 1; subR < Math.min(grid.length, r + 5); subR++) {
+          const rowSlice = grid[subR].slice(c, c + 7);
+          const hasEng = rowSlice.some(v => String(v || "").toLowerCase().includes("engineer"));
+          if (hasEng) {
+            const tableBlock = [rowSlice];
+            for (let dataR = subR + 1; dataR < grid.length; dataR++) {
+              const dataRow = grid[dataR].slice(c, c + 7);
+              const firstVal = String(dataRow[0] || "").trim();
+              if (!firstVal || firstVal.toLowerCase() === "total") break;
+              tableBlock.push(dataRow);
+            }
+            return parseSummaryTableRows(tableBlock);
+          }
+        }
+      }
+    }
+  }
+  return [];
+}
+
 function doGet(e) {
   try {
     const params = e && e.parameter ? e.parameter : {};
@@ -732,6 +867,10 @@ function doGet(e) {
           [TIMESTAMP_SYNC_CONFIG.PROPERTIES.LAST_RUN_TIME]: new Date().toISOString(),
         });
         return ResponseHandler.json({ ok: true });
+
+      case "getTechniciansActivitySummary":
+        const summaryData = getTechniciansActivitySummaryData();
+        return ResponseHandler.json({ ok: true, data: summaryData });
 
       default:
         return ResponseHandler.error("Unknown action requested.", { action });

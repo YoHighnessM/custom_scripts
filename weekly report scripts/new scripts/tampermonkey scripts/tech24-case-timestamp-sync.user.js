@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tech24 Case Timestamp Sync (Ultra-Fast Edition)
 // @namespace    tech24-case-sla-sync
-// @version      5.0
-// @description  Direct API extraction, dynamic logging, flexible date formatting, and open-case handling.
+// @version      5.1
+// @description  Direct API extraction, dynamic logging, flexible date formatting, open-case handling, and Technicians Activity Tracker.
 // @match        https://tech24et.com/cases*
 // @match        https://dashboard.tech24et.com/cases*
 // @match        https://dashboard.tech24et.com/*
@@ -11,6 +11,7 @@
 // @grant        GM_xmlhttpRequest
 // @connect      script.google.com
 // @connect      script.googleusercontent.com
+// @connect      docs.google.com
 // @connect      api.dashboard.tech24et.com
 // @connect      *
 // ==/UserScript==
@@ -23,6 +24,8 @@
   // =========================================================================
   const CONFIG = Object.freeze({
     BRIDGE_URL: "https://script.google.com/macros/s/AKfycbywn6bKxqdObHkgB4x7AgqyLLSCBYH2Mk5rSUfL_MndKiPfgeF8BRPd8o-TCGGOIbhI-g/exec",
+    SPREADSHEET_ID: "1_JUmZ_LoU1wrjoLGnh7HvE3AXRFU5eGkFg6fS5o_BsM",
+    TAB_NAME: "Technicians Activity Summary by District",
     API_BASE_URL: "https://api.dashboard.tech24et.com/api/callentries",
     SEARCH_SELECTOR: 'input[placeholder="Search Cases..."]',
     FILTER_WAIT_TIMEOUT_MS: 12000,
@@ -590,8 +593,574 @@
     if (document.visibilityState === "visible") checkAndRunSync(false);
   });
 
+  // =========================================================================
+  // 8. Technicians Activity Summary Tracker (Modal & Info Icon)
+  // =========================================================================
+  const ActivityTracker = {
+    TABLE_NAMES: ["Central Addis", "Wolayta", "Hawassa", "Shashemene"],
+    cachedData: null,
+    isLoading: false,
+    modalEl: null,
+    iconEl: null,
+
+    init() {
+      this.injectStyles();
+      this.ensureInfoIcon();
+      this.observeHeader();
+    },
+
+    injectStyles() {
+      if (document.getElementById("tech24-activity-tracker-style")) return;
+      const style = document.createElement("style");
+      style.id = "tech24-activity-tracker-style";
+      style.textContent = `
+        .tech24-info-icon-btn {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 22px;
+          height: 22px;
+          border-radius: 50%;
+          background: #eff6ff;
+          color: #2563eb;
+          border: 1px solid #bfdbfe;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          margin-right: 6px;
+          padding: 0;
+          outline: none;
+          vertical-align: middle;
+        }
+        .tech24-info-icon-btn:hover {
+          background: #2563eb;
+          color: #ffffff;
+          border-color: #1d4ed8;
+          transform: scale(1.08);
+          box-shadow: 0 2px 5px rgba(37,99,235,0.25);
+        }
+        .tech24-activity-modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100vw;
+          height: 100vh;
+          background: rgba(15, 23, 42, 0.65);
+          backdrop-filter: blur(4px);
+          z-index: 100000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+          box-sizing: border-box;
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 0.25s ease;
+        }
+        .tech24-activity-modal-overlay.open {
+          opacity: 1;
+          pointer-events: auto;
+        }
+        .tech24-activity-modal-content {
+          background: #ffffff;
+          color: #0f172a;
+          border-radius: 12px;
+          max-width: 950px;
+          width: 100%;
+          max-height: 85vh;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          box-shadow: 0 20px 25px -5px rgba(0,0,0,0.2), 0 10px 10px -5px rgba(0,0,0,0.1);
+          border: 1px solid #e2e8f0;
+          font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        .tech24-modal-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px 24px;
+          border-bottom: 1px solid #e2e8f0;
+          background: #f8fafc;
+        }
+        .tech24-modal-title {
+          font-size: 17px;
+          font-weight: 700;
+          color: #1e293b;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .tech24-modal-title span.tag {
+          font-size: 11px;
+          font-weight: 600;
+          color: #2563eb;
+          background: #dbeafe;
+          padding: 2px 8px;
+          border-radius: 9999px;
+        }
+        .tech24-modal-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .tech24-modal-refresh-btn, .tech24-modal-close-btn {
+          border: none;
+          background: transparent;
+          border-radius: 6px;
+          padding: 6px;
+          cursor: pointer;
+          color: #64748b;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s;
+        }
+        .tech24-modal-refresh-btn:hover {
+          background: #e2e8f0;
+          color: #2563eb;
+        }
+        .tech24-modal-close-btn:hover {
+          background: #fee2e2;
+          color: #ef4444;
+        }
+        .tech24-spin {
+          animation: tech24-spin-kf 0.8s linear infinite;
+        }
+        @keyframes tech24-spin-kf {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        .tech24-modal-body {
+          padding: 20px 24px;
+          overflow-y: auto;
+          flex-grow: 1;
+        }
+        .tech24-district-section {
+          margin-bottom: 24px;
+        }
+        .tech24-district-title {
+          font-size: 14px;
+          font-weight: 700;
+          color: #334155;
+          margin-bottom: 8px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .tech24-district-title::before {
+          content: "";
+          display: inline-block;
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #3b82f6;
+        }
+        .tech24-table-custom {
+          width: 100%;
+          border-collapse: separate;
+          border-spacing: 0;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          overflow: hidden;
+          font-size: 13px;
+        }
+        .tech24-table-custom th {
+          background: #f1f5f9;
+          color: #475569;
+          font-weight: 600;
+          text-align: left;
+          padding: 8px 12px;
+          border-bottom: 1px solid #e2e8f0;
+          border-right: 1px solid #f1f5f9;
+        }
+        .tech24-table-custom td {
+          padding: 8px 12px;
+          border-bottom: 1px solid #f1f5f9;
+          color: #1e293b;
+        }
+        .tech24-table-custom tr:last-child td {
+          border-bottom: none;
+        }
+        .tech24-table-custom tr:hover td {
+          background: #f8fafc;
+        }
+        .tech24-empty-msg {
+          color: #94a3b8;
+          font-style: italic;
+          padding: 12px;
+          text-align: center;
+        }
+      `;
+      document.head.appendChild(style);
+    },
+
+    ensureInfoIcon() {
+      // Find header row in dashboard case table
+      const headerRow = document.querySelector("table thead tr");
+      if (!headerRow) return;
+
+      // Check if icon is already placed
+      if (document.getElementById("tech24-info-icon-wrapper")) {
+        const wrapper = document.getElementById("tech24-info-icon-wrapper");
+        const slaTh = headerRow.querySelector("[data-sla-header]");
+        if (slaTh && wrapper.nextSibling !== slaTh) {
+          headerRow.insertBefore(wrapper, slaTh);
+        }
+        return;
+      }
+
+      const wrapper = document.createElement("th");
+      wrapper.id = "tech24-info-icon-wrapper";
+      wrapper.className = "py-2 px-1 whitespace-nowrap";
+      wrapper.style.cssText = "width: 32px; text-align: center; padding: 4px 6px;";
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "tech24-info-icon-btn";
+      btn.title = "View Technicians Activity Summary by District";
+      btn.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="16" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+        </svg>
+      `;
+
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.openModal();
+      });
+
+      wrapper.appendChild(btn);
+
+      // Place just before the SLA table header
+      const slaTh = headerRow.querySelector("[data-sla-header]");
+      if (slaTh) {
+        headerRow.insertBefore(wrapper, slaTh);
+      } else {
+        // If SLA header hasn't loaded yet, try after Action or Status, or at end
+        const headerCells = Array.from(headerRow.children);
+        const actionTh = headerCells.find((th) => th.textContent.toLowerCase().trim() === "action");
+        if (actionTh && actionTh.nextSibling) {
+          headerRow.insertBefore(wrapper, actionTh.nextSibling);
+        } else {
+          headerRow.appendChild(wrapper);
+        }
+      }
+    },
+
+    observeHeader() {
+      const observer = new MutationObserver(() => {
+        this.ensureInfoIcon();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    },
+
+    buildModalDOM() {
+      if (this.modalEl) return this.modalEl;
+
+      const overlay = document.createElement("div");
+      overlay.className = "tech24-activity-modal-overlay";
+      overlay.id = "tech24-activity-tracker-modal";
+
+      overlay.innerHTML = `
+        <div class="tech24-activity-modal-content" onclick="event.stopPropagation()">
+          <div class="tech24-modal-header">
+            <div class="tech24-modal-title">
+              Technicians Activity Summary
+              <span class="tag">By District</span>
+            </div>
+            <div class="tech24-modal-actions">
+              <button class="tech24-modal-refresh-btn" id="tech24-tracker-refresh-btn" title="Refresh from Google Sheet">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                </svg>
+              </button>
+              <button class="tech24-modal-close-btn" id="tech24-tracker-close-btn" title="Close">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="tech24-modal-body" id="tech24-tracker-modal-body">
+            <div style="text-align:center; padding: 40px; color:#64748b;">Loading activity tracker data...</div>
+          </div>
+        </div>
+      `;
+
+      overlay.onclick = () => this.closeModal();
+
+      const closeBtn = overlay.querySelector("#tech24-tracker-close-btn");
+      closeBtn.onclick = () => this.closeModal();
+
+      const refreshBtn = overlay.querySelector("#tech24-tracker-refresh-btn");
+      refreshBtn.onclick = () => this.refreshData();
+
+      document.body.appendChild(overlay);
+
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && overlay.classList.contains("open")) {
+          this.closeModal();
+        }
+      });
+
+      this.modalEl = overlay;
+      return overlay;
+    },
+
+    openModal() {
+      const modal = this.buildModalDOM();
+      modal.classList.add("open");
+      if (!this.cachedData) {
+        this.refreshData();
+      } else {
+        this.renderBody(this.cachedData);
+      }
+    },
+
+    closeModal() {
+      if (this.modalEl) {
+        this.modalEl.classList.remove("open");
+      }
+    },
+
+    async refreshData() {
+      if (this.isLoading) return;
+      this.isLoading = true;
+
+      const refreshBtn = document.getElementById("tech24-tracker-refresh-btn");
+      if (refreshBtn) {
+        const svg = refreshBtn.querySelector("svg");
+        if (svg) svg.classList.add("tech24-spin");
+      }
+
+      const bodyEl = document.getElementById("tech24-tracker-modal-body");
+      if (bodyEl && !this.cachedData) {
+        bodyEl.innerHTML = `<div style="text-align:center; padding: 40px; color:#64748b;">Fetching latest data from Google Sheet...</div>`;
+      }
+
+      try {
+        const data = await this.fetchData();
+        this.cachedData = data;
+        this.renderBody(data);
+      } catch (err) {
+        console.error("[ActivityTracker Error]:", err);
+        if (bodyEl) {
+          bodyEl.innerHTML = `
+            <div style="padding:20px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b; text-align:center;">
+              <strong>Failed to load Activity Tracker data</strong><br>
+              <span style="font-size:12px; color:#b91c1c;">${err.message}</span>
+            </div>
+          `;
+        }
+      } finally {
+        this.isLoading = false;
+        if (refreshBtn) {
+          const svg = refreshBtn.querySelector("svg");
+          if (svg) svg.classList.remove("tech24-spin");
+        }
+      }
+    },
+
+    async fetchData() {
+      // 1. Try Google Apps Script bridge endpoint
+      try {
+        const res = await NetworkBridge.get("getTechniciansActivitySummary");
+        if (res && res.data && typeof res.data === "object") {
+          return res.data;
+        }
+      } catch (bridgeErr) {
+        console.warn("[ActivityTracker] Bridge fetch failed, attempting CSV fallback:", bridgeErr.message);
+      }
+
+      // 2. Direct Fallback: fetch via Google Sheets CSV export or visualization API
+      const exportUrl = `https://docs.google.com/spreadsheets/d/${CONFIG.SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(CONFIG.TAB_NAME)}`;
+      return await this.fetchFromCsvUrl(exportUrl);
+    },
+
+    fetchFromCsvUrl(url) {
+      return new Promise((resolve, reject) => {
+        if (typeof GM_xmlhttpRequest !== "function") {
+          return reject(new Error("GM_xmlhttpRequest not available."));
+        }
+
+        GM_xmlhttpRequest({
+          method: "GET",
+          url: url,
+          timeout: 25000,
+          onload: (response) => {
+            if (response.status >= 200 && response.status < 300) {
+              const text = response.responseText || "";
+              if (text.includes("<!DOCTYPE html>") && text.includes("accounts.google.com")) {
+                return reject(new Error("Access denied. Please ensure the Google Sheet is shared or accessed via the bridge."));
+              }
+              const parsed = this.parseCsvData(text);
+              resolve(parsed);
+            } else {
+              reject(new Error(`Failed to download sheet CSV (HTTP ${response.status})`));
+            }
+          },
+          onerror: () => reject(new Error("Network error fetching sheet data")),
+          ontimeout: () => reject(new Error("Timeout fetching sheet data"))
+        });
+      });
+    },
+
+    parseCsvData(csvText) {
+      const lines = csvText.split(/\r?\n/).map((line) => {
+        // Simple CSV splitter handling quotes
+        const result = [];
+        let cur = "";
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+          if (char === '"' && line[i + 1] === '"') {
+            cur += '"';
+            i++;
+          } else if (char === '"') {
+            inQuotes = !inQuotes;
+          } else if (char === "," && !inQuotes) {
+            result.push(cur.trim());
+            cur = "";
+          } else {
+            cur += char;
+          }
+        }
+        result.push(cur.trim());
+        return result;
+      });
+
+      const tables = {};
+      this.TABLE_NAMES.forEach((name) => {
+        tables[name] = [];
+      });
+
+      this.TABLE_NAMES.forEach((name) => {
+        const norm = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+        for (let r = 0; r < lines.length; r++) {
+          for (let c = 0; c < lines[r].length; c++) {
+            const cell = (lines[r][c] || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+            if (cell === norm) {
+              // Locate header row below
+              for (let subR = r + 1; subR < Math.min(lines.length, r + 5); subR++) {
+                const rowSlice = lines[subR].slice(c, c + 7);
+                if (rowSlice.some((v) => v.toLowerCase().includes("engineer"))) {
+                  const headers = rowSlice.map((h) => h.toLowerCase());
+                  const engIdx = headers.findIndex((h) => h.includes("engineer"));
+                  const physIdx = headers.findIndex((h) => h.includes("physical"));
+                  const phoneIdx = headers.findIndex((h) => h.includes("phone"));
+                  const totalCaseIdx = headers.findIndex((h) => h.includes("total case"));
+                  const pmIdx = headers.findIndex((h) => h === "pm" || h.includes("pm"));
+                  const totalActIdx = headers.findIndex((h) => h.includes("total activity"));
+
+                  for (let dataR = subR + 1; dataR < lines.length; dataR++) {
+                    const dataRow = lines[dataR].slice(c, c + 7);
+                    const eng = (dataRow[engIdx !== -1 ? engIdx : 0] || "").trim();
+                    if (!eng || eng.toLowerCase() === "total" || eng.toLowerCase() === "engineers") break;
+
+                    const physical = (dataRow[physIdx !== -1 ? physIdx : 1] || "0").trim();
+                    const phone = (dataRow[phoneIdx !== -1 ? phoneIdx : 2] || "0").trim();
+                    const totalCase = (dataRow[totalCaseIdx !== -1 ? totalCaseIdx : 3] || "0").trim();
+                    const pm = (dataRow[pmIdx !== -1 ? pmIdx : 4] || "0").trim();
+                    const totalActivity = (dataRow[totalActIdx !== -1 ? totalActIdx : 5] || "0").trim();
+
+                    tables[name].push({
+                      engineer: eng,
+                      physicalAddress: physical,
+                      phoneSupport: phone,
+                      totalCase,
+                      pm,
+                      totalActivity,
+                      totalCaseDisplay: `${totalCase} (${physical} | ${phone})`
+                    });
+                  }
+                  break;
+                }
+              }
+            }
+          }
+        }
+      });
+
+      return tables;
+    },
+
+    renderBody(data) {
+      const bodyEl = document.getElementById("tech24-tracker-modal-body");
+      if (!bodyEl) return;
+
+      bodyEl.innerHTML = "";
+
+      let hasAnyRows = false;
+      this.TABLE_NAMES.forEach((district) => {
+        const rows = data && data[district] ? data[district] : [];
+        if (rows.length > 0) hasAnyRows = true;
+
+        const section = document.createElement("div");
+        section.className = "tech24-district-section";
+
+        const title = document.createElement("div");
+        title.className = "tech24-district-title";
+        title.textContent = district;
+        section.appendChild(title);
+
+        if (rows.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "tech24-empty-msg";
+          empty.textContent = "No technician activity records found for this district.";
+          section.appendChild(empty);
+        } else {
+          const table = document.createElement("table");
+          table.className = "tech24-table-custom";
+
+          // Table Header: Engineers, Total Case (Physical Address | Phone Support), PM, Total Activity
+          table.innerHTML = `
+            <thead>
+              <tr>
+                <th style="width: 28%;">Engineers</th>
+                <th style="width: 36%;">Total Case (Physical Address | Phone Support)</th>
+                <th style="width: 16%; text-align: center;">PM</th>
+                <th style="width: 20%; text-align: center;">Total Activity</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((r) => `
+                <tr>
+                  <td style="font-weight: 500;">${r.engineer || "—"}</td>
+                  <td>${r.totalCaseDisplay || `${r.totalCase || 0} (${r.physicalAddress || 0} | ${r.phoneSupport || 0})`}</td>
+                  <td style="text-align: center; color: #475569;">${r.pm || 0}</td>
+                  <td style="text-align: center; font-weight: 600; color: #2563eb;">${r.totalActivity || 0}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          `;
+          section.appendChild(table);
+        }
+
+        bodyEl.appendChild(section);
+      });
+
+      if (!hasAnyRows) {
+        bodyEl.innerHTML = `
+          <div style="text-align:center; padding:30px; color:#64748b;">
+            <p style="font-size:14px; margin-bottom:8px;">No activity data currently available.</p>
+            <p style="font-size:12px; color:#94a3b8;">Click the refresh icon above once data is entered in Google Sheets.</p>
+          </div>
+        `;
+      }
+    }
+  };
+
+  // Initialize immediately and also after brief timeouts to handle dynamic SPA route transitions
+  ActivityTracker.init();
+  SyncUI.init();
+
   setTimeout(() => {
     SyncUI.init();
+    ActivityTracker.init();
     checkAndRunSync(false);
   }, 1000);
 
@@ -601,6 +1170,7 @@
     DashboardDOM,
     ApiExtractor,
     SyncUI,
+    ActivityTracker,
     checkAndRunSync
   };
 
