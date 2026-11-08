@@ -389,25 +389,37 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
   assert.strictEqual(parsedTables["Wolayta"][0].engineer, "Mulugeta D.");
   assert.strictEqual(parsedTables["Hawassa"].length, 0);
 
-  // Test 7b: Info Icon DOM Placement (Just before SLA header)
+  // Test 7b: Info Icon DOM Placement (Just before SLA header text)
+  const flexDiv = {
+    children: [],
+    firstChild: null,
+    insertBefore(newEl, refEl) {
+      this.children.unshift(newEl);
+      this.firstChild = newEl;
+    },
+    appendChild(newEl) {
+      this.children.push(newEl);
+      if (!this.firstChild) this.firstChild = newEl;
+    }
+  };
+
   const slaTh = {
     getAttribute(name) { return name === "data-sla-header" ? "true" : null; },
     textContent: "SLA",
-    nextSibling: null
+    querySelector(sel) {
+      if (sel === "#tech24-info-icon-btn") {
+        return flexDiv.children.find(c => c.id === "tech24-info-icon-btn") || null;
+      }
+      if (sel.includes("flex")) return flexDiv;
+      return null;
+    }
   };
-  const durationTh = {
-    getAttribute(name) { return name === "data-duration-header" ? "true" : null; },
-    textContent: "Duration",
-    nextSibling: null
-  };
-  slaTh.nextSibling = durationTh;
 
   const children = [
-    { textContent: "Case ID", getAttribute() { return null; } },
-    { textContent: "District", getAttribute() { return null; } },
-    { textContent: "Action", getAttribute() { return null; } },
-    slaTh,
-    durationTh
+    { textContent: "Case ID" },
+    { textContent: "District" },
+    { textContent: "Action" },
+    slaTh
   ];
 
   const mockHeaderRow = {
@@ -415,17 +427,6 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
     querySelector(sel) {
       if (sel === "[data-sla-header]") return slaTh;
       return null;
-    },
-    insertBefore(newEl, refEl) {
-      const idx = children.indexOf(refEl);
-      if (idx !== -1) {
-        children.splice(idx, 0, newEl);
-      } else {
-        children.push(newEl);
-      }
-    },
-    appendChild(newEl) {
-      children.push(newEl);
     }
   };
 
@@ -437,11 +438,9 @@ console.log("🧪 Running unit tests for Tech24 Userscripts...\n");
 
   SyncScript.ActivityTracker.ensureInfoIcon();
 
-  // Find info icon wrapper in children
-  const iconIdx = children.findIndex(c => c.id === "tech24-info-icon-wrapper");
-  const slaIdx = children.indexOf(slaTh);
-  assert.ok(iconIdx !== -1, "Info icon wrapper must be inserted");
-  assert.strictEqual(iconIdx, slaIdx - 1, "Info icon wrapper must be positioned immediately before SLA header");
+  // Find info icon button inside SLA flex container
+  const iconBtn = flexDiv.children.find(c => c.id === "tech24-info-icon-btn");
+  assert.ok(iconBtn, "Info icon button must be inserted inside SLA header flex container");
 
   global.document.querySelector = origQuerySelector;
   console.log("  ✅ Technicians Activity Summary Tracker passed!");
